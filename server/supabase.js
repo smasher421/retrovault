@@ -1,150 +1,416 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL
-const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY
+const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
+const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
-export const supabase = supabaseUrl && supabaseAnonKey
-  ? createClient(supabaseUrl, supabaseAnonKey)
+// Server-only client. Keep the service role key out of all Vite/browser variables.
+export const supabase = url && serviceKey
+  ? createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
   : null
 
-export const localGames = [
-  {
-    id: 1,
-    user_id: 'demo-user',
-    title: 'Super Mario World',
-    platform: 'SNES',
-    genre: 'Platformer',
-    year: 1990,
-    status: 'Completed',
-    notes: 'A perfect 16-bit classic with outstanding level design.',
-    cover_image: '',
-  },
-  {
-    id: 2,
-    user_id: 'demo-user',
-    title: 'The Legend of Zelda: A Link to the Past',
-    platform: 'SNES',
-    genre: 'Action RPG',
-    year: 1991,
-    status: 'Playing',
-    notes: 'Still working through the dungeons and side quests.',
-    cover_image: '',
-  },
-  {
-    id: 3,
-    user_id: 'demo-user',
-    title: 'Sonic the Hedgehog 2',
-    platform: 'Genesis',
-    genre: 'Platformer',
-    year: 1992,
-    status: 'Backlog',
-    notes: 'Need to give the spin dash routes another pass.',
-    cover_image: '',
-  },
-  {
-    id: 4,
-    user_id: 'demo-user',
-    title: 'Final Fantasy VII',
-    platform: 'PlayStation',
-    genre: 'RPG',
-    year: 1997,
-    status: '100% Completed',
-    notes: 'One of the best JRPGs ever made, finished with all side content.',
-    cover_image: '',
-  },
-]
+const toGame = (row) => {
+  const catalog = row.catalog || row.games_catalog || {}
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    catalog_id: row.catalog_id,
+    title: catalog.title || 'Untitled game',
+    platform: row.platform_played || catalog.platforms?.[0] || 'Unknown',
+    genre: catalog.genres?.join(', ') || 'Unknown',
+    year: catalog.release_year,
+    status: row.status,
+    rating: row.rating,
+    notes: row.notes || '',
+    review_text: row.review_text || '',
+    cover_image: catalog.artwork_grid_url || catalog.cover_url || catalog.backdrop_url || '',
+    backdrop_url: catalog.artwork_hero_url || catalog.backdrop_url || '',
+    artwork_grid_url: catalog.artwork_grid_url || '',
+    artwork_hero_url: catalog.artwork_hero_url || '',
+    artwork_logo_url: catalog.artwork_logo_url || '',
+    metacritic_score: catalog.metacritic_score,
+    metacritic_url: catalog.metacritic_url || '',
+    screenshots: catalog.screenshots || [],
+    summary: catalog.summary || '',
+    developer: catalog.developer || '',
+    publisher: catalog.publisher || '',
+    source: row.source,
+    steam_app_id: catalog.steam_app_id,
+    playtime_minutes: row.playtime_minutes || 0,
+    last_played_at: row.last_played_at,
+    is_favorite: row.is_favorite,
+    purchase_price: row.purchase_price,
+    time_to_beat_hours: catalog.time_to_beat_hours,
+    genres: catalog.genres || [],
+    multiplayer: catalog.multiplayer || false,
+    co_op: catalog.co_op || false,
+  }
+}
+
+const catalogRelation = 'catalog:games_catalog(*)'
+
+export const getCatalogGameForUser = async (userId, userGameId) => {
+  if (!supabase) throw new Error('Supabase server configuration is missing')
+  const { data, error } = await supabase.from('user_games')
+    .select('catalog:games_catalog(*)')
+    .eq('id', userGameId).eq('user_id', userId).single()
+  if (error) throw error
+  return data.catalog
+}
+
+export const updateCatalogDetails = async (catalogId, changes) => {
+  const allowedFields = [
+    'metacritic_score', 'metacritic_url', 'screenshots', 'artwork_grid_url',
+    'artwork_hero_url', 'artwork_logo_url', 'details_updated_at', 'summary',
+    'developer', 'publisher', 'release_year', 'genres', 'backdrop_url', 'cover_url',
+  ]
+  const update = Object.fromEntries(Object.entries(changes).filter(([key, value]) => allowedFields.includes(key) && value !== undefined))
+  if (!Object.keys(update).length) return null
+  update.updated_at = new Date().toISOString()
+  const { data, error } = await supabase.from('games_catalog').update(update).eq('id', catalogId).select('*').single()
+  if (error) throw error
+  return data
+}
 
 export const getUserGames = async (userId) => {
-  if (!supabase) {
-    return localGames.filter((game) => game.user_id === userId)
-  }
-
+  if (!supabase) throw new Error('Supabase server configuration is missing')
   const { data, error } = await supabase
-    .from('games')
-    .select('*')
+    .from('user_games')
+    .select(`*, ${catalogRelation}`)
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data || []).map(toGame)
+}
 
-  if (error) {
-    console.error('Supabase fetch error:', error)
-    return localGames.filter((game) => game.user_id === userId)
+export const getUserProfile = async (steamId) => {
+  if (!supabase) throw new Error('Supabase server configuration is missing')
+  const { data, error } = await supabase.from('profiles').select('*').eq('steam_id', steamId).maybeSingle()
+  if (error) throw error
+  return data
+}
+
+export const upsertSteamProfile = async (steamId, player = {}) => {
+  if (!supabase) throw new Error('Supabase server configuration is missing')
+  const payload = {
+    steam_id: steamId,
+    ...(player.personaname ? { username: player.personaname } : {}),
+    ...(player.avatarfull ? { avatar_url: player.avatarfull } : {}),
+    ...(player.profileurl ? { profile_url: player.profileurl } : {}),
+    ...(player.timecreated ? { steam_created_at: new Date(player.timecreated * 1000).toISOString() } : {}),
+    updated_at: new Date().toISOString(),
   }
+  const { data, error } = await supabase.from('profiles').upsert(payload, { onConflict: 'steam_id' }).select().single()
+  if (error) throw error
+  return data
+}
 
+export const updateUserProfile = async (steamId, changes) => {
+  const allowed = {}
+  if (changes.preferred_theme) allowed.preferred_theme = changes.preferred_theme
+  if (changes.custom_theme && typeof changes.custom_theme === 'object') allowed.custom_theme = changes.custom_theme
+  if (typeof changes.is_public === 'boolean') allowed.is_public = changes.is_public
+  if (Object.keys(allowed).length === 0) throw new Error('No supported profile settings were supplied')
+  allowed.updated_at = new Date().toISOString()
+  const { data, error } = await supabase.from('profiles').update(allowed).eq('steam_id', steamId).select().single()
+  if (error) throw error
+  return data
+}
+
+export const getPublicProfile = async (steamId) => {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('steam_id,username,avatar_url,profile_url,steam_created_at,preferred_theme,custom_theme,is_public')
+    .eq('steam_id', steamId)
+    .eq('is_public', true)
+    .maybeSingle()
+  if (error) throw error
+  return data
+}
+
+export const searchCatalog = async (query, limit = 30) => {
+  if (!supabase) throw new Error('Supabase server configuration is missing')
+  const { data, error } = await supabase
+    .from('games_catalog')
+    .select('id,catalog_key,steam_app_id,igdb_id,rawg_id,title,slug,release_year,developer,publisher,summary,genres,platforms,cover_url,backdrop_url,time_to_beat_hours,rating_avg,rating_count,co_op,multiplayer,metadata_provider')
+    .ilike('title', `%${query.replace(/[%_]/g, '\\$&')}%`)
+    .order('rating_count', { ascending: false })
+    .limit(limit)
+  if (error) throw error
   return data || []
 }
 
-export const createUserGame = async (payload) => {
-  if (!supabase) {
-    const newGame = {
-      ...payload,
-      id: Date.now(),
+export const upsertCatalogRows = async (rows, conflict = 'catalog_key') => {
+  if (!supabase || rows.length === 0) return []
+  const { data, error } = await supabase.from('games_catalog').upsert(rows, { onConflict: conflict }).select()
+  if (error) throw error
+  return data || []
+}
+
+export const getSteamCatalogNeedingEnrichment = async (steamAppIds) => {
+  if (!supabase || steamAppIds.length === 0) return []
+  const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString()
+  const { data, error } = await supabase.from('games_catalog')
+    .select('steam_app_id,release_year,genres,metadata_updated_at')
+    .in('steam_app_id', steamAppIds)
+  if (error) throw error
+  return (data || []).filter((game) => {
+    const stale = !game.metadata_updated_at || game.metadata_updated_at < cutoff
+    return stale && (!game.release_year || game.genres.length === 0)
+  })
+}
+
+export const updateSteamCatalogMetadata = async (steamAppId, details) => {
+  const changes = {
+    metadata_provider: 'steam-store',
+    metadata_updated_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }
+  if (details.release_year) changes.release_year = details.release_year
+  if (details.developer) changes.developer = details.developer
+  if (details.publisher) changes.publisher = details.publisher
+  if (details.summary) changes.summary = details.summary
+  if (details.genres?.length) changes.genres = details.genres
+  if (details.backdrop_url) changes.backdrop_url = details.backdrop_url
+  if (details.time_to_beat_hours) changes.time_to_beat_hours = details.time_to_beat_hours
+  const { error } = await supabase.from('games_catalog').update(changes).eq('steam_app_id', steamAppId)
+  if (error) throw error
+}
+
+export const addCatalogGame = async (payload, userId) => {
+  if (!supabase) throw new Error('Supabase server configuration is missing')
+  let catalog
+  if (payload.catalog_id) {
+    const { data, error } = await supabase.from('games_catalog').select('*').eq('id', payload.catalog_id).single()
+    if (error) throw error
+    catalog = data
+  } else {
+    const title = String(payload.title || '').trim()
+    if (!title) throw new Error('Title is required')
+    const platform = String(payload.platform || '').trim() || 'Unknown'
+    const genres = Array.isArray(payload.genres)
+      ? payload.genres
+      : String(payload.genre || '').split(',').map((item) => item.trim()).filter(Boolean)
+    const manualKey = `manual:${title.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-')}:${platform.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-')}`
+    const row = {
+      catalog_key: manualKey,
+      title,
+      slug: title.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, ''),
+      release_year: Number(payload.year) || null,
+      genres,
+      platforms: [platform],
+      cover_url: payload.cover_image || null,
+      metadata_provider: payload.metadata_provider || 'manual',
+      metadata_updated_at: new Date().toISOString(),
     }
-    localGames.unshift(newGame)
-    return newGame
+    const { data, error } = await supabase.from('games_catalog').upsert(row, { onConflict: 'catalog_key' }).select().single()
+    if (error) throw error
+    catalog = data
   }
 
-  const { data, error } = await supabase
-    .from('games')
-    .insert(payload)
-    .select()
-    .single()
-
-  if (error) {
-    throw error
+  const userGame = {
+    user_id: userId,
+    catalog_id: catalog.id,
+    status: payload.status || 'Backlog',
+    platform_played: String(payload.platform || catalog.platforms?.[0] || 'PC'),
+    playtime_minutes: Number(payload.playtime_minutes) || 0,
+    notes: payload.notes || null,
+    review_text: payload.review_text || null,
+    rating: payload.rating ? Number(payload.rating) : null,
+    is_favorite: Boolean(payload.is_favorite),
+    purchase_price: payload.purchase_price ? Number(payload.purchase_price) : null,
+    source: payload.source === 'steam' ? 'steam' : 'manual',
   }
-
-  return data
+  const { data, error } = await supabase.from('user_games').upsert(userGame, { onConflict: 'user_id,catalog_id', ignoreDuplicates: true }).select(`*, ${catalogRelation}`).single()
+  if (error) throw error
+  if (data) return toGame(data)
+  const { data: existing, error: readError } = await supabase
+    .from('user_games').select(`*, ${catalogRelation}`)
+    .eq('user_id', userId).eq('catalog_id', catalog.id).single()
+  if (readError) throw readError
+  return toGame(existing)
 }
 
 export const updateUserGameStatus = async (id, userId, status) => {
-  if (!supabase) {
-    const game = localGames.find((item) => item.id === Number(id) && item.user_id === userId)
-    if (!game) {
-      throw new Error('Game not found')
-    }
+  const { data, error } = await supabase.from('user_games').update({ status, updated_at: new Date().toISOString() })
+    .eq('id', id).eq('user_id', userId).select(`*, ${catalogRelation}`).single()
+  if (error) throw error
+  return toGame(data)
+}
 
-    game.status = status
-    return game
+export const updateUserGame = async (id, userId, changes) => {
+  const allowed = {}
+  for (const field of ['rating', 'is_favorite', 'notes', 'review_text', 'purchase_price', 'platform_played']) {
+    if (Object.hasOwn(changes, field)) allowed[field] = changes[field]
   }
-
-  const { data, error } = await supabase
-    .from('games')
-    .update({ status })
-    .eq('id', id)
-    .eq('user_id', userId)
-    .select()
-    .single()
-
-  if (error) {
-    throw error
-  }
-
-  return data
+  if (Object.keys(allowed).length === 0) throw new Error('No supported game fields were supplied')
+  allowed.updated_at = new Date().toISOString()
+  const { data, error } = await supabase.from('user_games').update(allowed)
+    .eq('id', id).eq('user_id', userId).select(`*, ${catalogRelation}`).single()
+  if (error) throw error
+  return toGame(data)
 }
 
 export const deleteUserGame = async (id, userId) => {
-  if (!supabase) {
-    const index = localGames.findIndex(
-      (game) => game.id === Number(id) && game.user_id === userId,
-    )
+  const { data, error } = await supabase.from('user_games').delete().eq('id', id).eq('user_id', userId).select('id').single()
+  if (error) throw error
+  return data
+}
 
-    if (index === -1) {
-      throw new Error('Game not found')
+export const syncSteamGames = async (userId, steamGames) => {
+  if (!supabase) throw new Error('Supabase server configuration is missing')
+  if (!steamGames.length) return { games: [], imported: 0, playLogs: 0 }
+
+  const ids = steamGames.map((game) => game.appid)
+  const { data: existingCatalog, error: catalogError } = await supabase.from('games_catalog')
+    .select('id,steam_app_id,title,genres,release_year,cover_url,metadata_provider')
+    .in('steam_app_id', ids)
+  if (catalogError) throw catalogError
+  const catalogByApp = new Map((existingCatalog || []).map((game) => [game.steam_app_id, game]))
+
+  const catalogRows = steamGames.map((game) => {
+    const existing = catalogByApp.get(game.appid)
+    const appId = Number(game.appid)
+    const appName = game.name || existing?.title || `Steam app ${appId}`
+    const slug = appName.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '')
+    return {
+      catalog_key: `steam:${appId}`,
+      steam_app_id: appId,
+      title: appName,
+      slug: existing?.slug || slug,
+      platforms: ['PC'],
+      genres: existing?.genres?.length ? existing.genres : [],
+      release_year: existing?.release_year || null,
+      cover_url: `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${appId}/library_600x900_2x.jpg`,
+      backdrop_url: `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${appId}/library_hero.jpg`,
+      metadata_provider: existing?.metadata_provider && existing.metadata_provider !== 'legacy' ? existing.metadata_provider : 'steam',
     }
+  })
+  const { data: catalogs, error: upsertCatalogError } = await supabase.from('games_catalog')
+    .upsert(catalogRows, { onConflict: 'steam_app_id' }).select('id,steam_app_id,title')
+  if (upsertCatalogError) throw upsertCatalogError
+  const catalogIdByApp = new Map((catalogs || []).map((game) => [game.steam_app_id, game.id]))
 
-    localGames.splice(index, 1)
-    return true
+  const catalogIds = steamGames.map((game) => catalogIdByApp.get(game.appid)).filter(Boolean)
+  const { data: existingUserGames, error: userGamesError } = await supabase.from('user_games')
+    .select('id,catalog_id,status,playtime_minutes')
+    .eq('user_id', userId).in('catalog_id', catalogIds)
+  if (userGamesError) throw userGamesError
+  const existingByCatalog = new Map((existingUserGames || []).map((game) => [game.catalog_id, game]))
+
+  const userRows = steamGames.map((game) => {
+    const catalogId = catalogIdByApp.get(game.appid)
+    const existing = existingByCatalog.get(catalogId)
+    const totalMinutes = Math.max(0, Number(game.playtime_forever) || 0)
+    return {
+      user_id: userId,
+      catalog_id: catalogId,
+      status: existing?.status || (totalMinutes > 0 ? 'Playing' : 'Backlog'),
+      platform_played: 'Steam',
+      playtime_minutes: totalMinutes,
+      last_played_at: game.rtime_last_played ? new Date(game.rtime_last_played * 1000).toISOString() : null,
+      source: 'steam',
+    }
+  })
+  const { data: savedRows, error: saveError } = await supabase.from('user_games')
+    .upsert(userRows, { onConflict: 'user_id,catalog_id' }).select('id,catalog_id,playtime_minutes')
+  if (saveError) throw saveError
+  const savedByCatalog = new Map((savedRows || []).map((game) => [game.catalog_id, game]))
+
+  const playLogs = userRows.flatMap((row) => {
+    const previous = existingByCatalog.get(row.catalog_id)
+    const next = savedByCatalog.get(row.catalog_id)
+    const delta = row.playtime_minutes - (previous?.playtime_minutes || 0)
+    if (delta <= 0 || !next) return []
+    const steamGame = steamGames.find((game) => catalogIdByApp.get(game.appid) === row.catalog_id)
+    return [{
+      user_id: userId,
+      user_game_id: next.id,
+      catalog_id: row.catalog_id,
+      happened_at: steamGame?.rtime_last_played ? new Date(steamGame.rtime_last_played * 1000).toISOString() : new Date().toISOString(),
+      source: 'steam',
+      delta_minutes: delta,
+      total_playtime_minutes: row.playtime_minutes,
+    }]
+  })
+  if (playLogs.length) {
+    const { error: logsError } = await supabase.from('play_logs')
+      .upsert(playLogs, { onConflict: 'user_game_id,total_playtime_minutes', ignoreDuplicates: true })
+    if (logsError) throw logsError
   }
 
-  const { error } = await supabase
-    .from('games')
-    .delete()
-    .eq('id', id)
+  const games = await getUserGames(userId)
+  return { games, imported: savedRows?.length || 0, playLogs: playLogs.length }
+}
+
+export const getUserPlayLogs = async (userId, limit = 100) => {
+  const { data, error } = await supabase.from('play_logs')
+    .select(`*, catalog:games_catalog(title,cover_url,steam_app_id)`)
     .eq('user_id', userId)
+    .order('happened_at', { ascending: false })
+    .limit(limit)
+  if (error) throw error
+  return data || []
+}
 
-  if (error) {
-    throw error
+export const getPublicProfileGames = async (steamId, limit = 12) => {
+  const { data, error } = await supabase.from('user_games')
+    .select(`*, ${catalogRelation}`)
+    .eq('user_id', steamId)
+    .eq('is_favorite', true)
+    .order('rating', { ascending: false, nullsFirst: false })
+    .limit(limit)
+  if (error) throw error
+  return (data || []).map(toGame)
+}
+
+export const getUserGamesWithCatalog = async (userId) => {
+  const { data, error } = await supabase.from('user_games')
+    .select(`*, catalog:games_catalog(*)`)
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data || []).map(toGame)
+}
+
+export const getPublicProfileSummary = async (steamId) => {
+  const profile = await getPublicProfile(steamId)
+  if (!profile) return null
+  const { data, error } = await supabase.from('user_games')
+    .select(`*, catalog:games_catalog(*)`)
+    .eq('user_id', steamId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  const games = (data || []).map(toGame)
+  const completed = games.filter((game) => ['Completed', '100% Completed'].includes(game.status)).length
+  const privateFields = new Set(['notes', 'review_text', 'purchase_price', 'source'])
+  const publicGames = games.map((game) => Object.fromEntries(Object.entries(game).filter(([key]) => !privateFields.has(key))))
+  return {
+    profile: { steam_id: profile.steam_id, username: profile.username, avatar_url: profile.avatar_url, profile_url: profile.profile_url, steam_created_at: profile.steam_created_at, is_public: profile.is_public },
+    games: publicGames,
+    stats: {
+      total: games.length,
+      completed,
+      completionRate: games.length ? Math.round(completed / games.length * 100) : 0,
+      playtimeMinutes: games.reduce((total, game) => total + game.playtime_minutes, 0),
+    },
   }
+}
 
-  return true
+export const getLanMatches = async (userId, friendSteamId) => {
+  const [mine, theirs] = await Promise.all([
+    supabase.from('user_games').select('status,catalog_id').eq('user_id', userId).in('status', ['Backlog', 'Playing']),
+    supabase.from('user_games').select('status,catalog_id').eq('user_id', friendSteamId).in('status', ['Backlog', 'Playing']),
+  ])
+  if (mine.error) throw mine.error
+  if (theirs.error) throw theirs.error
+  const sharedIds = [...new Set((mine.data || []).map((game) => game.catalog_id))]
+    .filter((id) => (theirs.data || []).some((game) => game.catalog_id === id))
+  if (!sharedIds.length) return []
+  const { data, error } = await supabase.from('games_catalog')
+    .select('id,title,slug,cover_url,genres,platforms,co_op,multiplayer')
+    .in('id', sharedIds)
+    .or('co_op.eq.true,multiplayer.eq.true')
+    .order('title')
+  if (error) throw error
+  return data || []
 }

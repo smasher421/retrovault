@@ -1,53 +1,7 @@
 @import 'tailwindcss';
 
-:root {
-  font-family: 'Inter', 'Segoe UI', sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-  color: rgba(255, 255, 255, 0.9);
-  background: #050b16;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-html {
-  scroll-behavior: smooth;
-}
-
-body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
-  background: #050b16;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
-
-#root {
-  min-height: 100vh;
-}
-
-::-webkit-scrollbar {
-  width: 10px;
-}
-
-::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.8);
-}
-
-::-webkit-scrollbar-thumb {
-  background: rgba(34, 211, 238, 0.5);
-  border-radius: 9999px;
-}
-
+:root{font-family:Tahoma,Verdana,Arial,sans-serif;color:#e3e4db;background:#171914;font-synthesis:none;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased;font-size:13px;--bg:#171914;--panel:#242720;--panel-hi:#2d3028;--border:#41443a;--text:#e3e4db;--muted:#9ea091;--accent:#a9d4ff;--accent-bg:#1d315d;--custom-bg:var(--bg);--custom-panel:var(--panel);--custom-accent:var(--accent);--custom-text:var(--text)}
+:root[data-theme="source-obsidian"]{--bg:#111416;--panel:#202528;--panel-hi:#2a3235;--border:#485357;--accent:#d98a62;--accent-bg:#503225;--muted:#a4adaf}
+:root[data-theme="hev-hazard"]{--bg:#211a12;--panel:#30261a;--panel-hi:#403221;--border:#72552e;--accent:#ffb642;--accent-bg:#563b16;--muted:#c1a77d}
+:root[data-theme="lan-party-98"]{--bg:#15202a;--panel:#243544;--panel-hi:#30475b;--border:#45637b;--accent:#77e2cc;--accent-bg:#174d4b;--muted:#9cb8c8}
+*{box-sizing:border-box}body{margin:0;min-width:320px;min-height:100vh;background:radial-gradient(ellipse at 50% -20%,color-mix(in srgb,var(--custom-accent) 8%,transparent),transparent 50%),var(--custom-bg);color:var(--custom-text)}button,input,select,textarea{font:inherit}button,a,select{cursor:pointer}button{color:inherit}a{color:var(--custom-accent)}#root{min-height:100vh}::selection{background:var(--accent-bg);color:white}::-webkit-scrollbar{width:11px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:#55594c;border:2px solid var(--bg)}
