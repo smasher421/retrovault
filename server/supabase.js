@@ -30,7 +30,7 @@ const toGame = (row) => {
     metacritic_score: catalog.metacritic_score,
     metacritic_url: catalog.metacritic_url || '',
     screenshots: catalog.screenshots || [],
-    summary: catalog.summary || '',
+    summary: (catalog.summary || '').slice(0, 300),
     developer: catalog.developer || '',
     publisher: catalog.publisher || '',
     source: row.source,
@@ -43,10 +43,13 @@ const toGame = (row) => {
     genres: catalog.genres || [],
     multiplayer: catalog.multiplayer || false,
     co_op: catalog.co_op || false,
+    rawg_id: catalog.rawg_id,
+    rating_avg: catalog.rating_avg || 0,
+    rating_count: catalog.rating_count || 0,
   }
 }
 
-const catalogRelation = 'catalog:games_catalog(*)'
+const catalogRelation = 'catalog:games_catalog(id,title,platforms,release_year,genres,cover_url,backdrop_url,artwork_grid_url,artwork_hero_url,artwork_logo_url,metacritic_score,metacritic_url,screenshots,summary,developer,publisher,steam_app_id,rawg_id,rating_avg,rating_count,time_to_beat_hours,multiplayer,co_op)'
 
 export const getCatalogGameForUser = async (userId, userGameId) => {
   if (!supabase) throw new Error('Supabase server configuration is missing')
@@ -57,11 +60,19 @@ export const getCatalogGameForUser = async (userId, userGameId) => {
   return data.catalog
 }
 
+export const getCatalogGameById = async (catalogId) => {
+  if (!supabase) throw new Error('Supabase server configuration is missing')
+  const { data, error } = await supabase.from('games_catalog').select('*').eq('id', catalogId).single()
+  if (error) throw error
+  return data
+}
+
 export const updateCatalogDetails = async (catalogId, changes) => {
   const allowedFields = [
     'metacritic_score', 'metacritic_url', 'screenshots', 'artwork_grid_url',
     'artwork_hero_url', 'artwork_logo_url', 'details_updated_at', 'summary',
     'developer', 'publisher', 'release_year', 'genres', 'backdrop_url', 'cover_url',
+    'rawg_id', 'rating_avg', 'rating_count',
   ]
   const update = Object.fromEntries(Object.entries(changes).filter(([key, value]) => allowedFields.includes(key) && value !== undefined))
   if (!Object.keys(update).length) return null
@@ -137,6 +148,52 @@ export const searchCatalog = async (query, limit = 30) => {
     .limit(limit)
   if (error) throw error
   return data || []
+}
+
+export const getCatalogDiscover = async (userId, { platform = '', genre = '', limit = 36 } = {}) => {
+  if (!supabase) throw new Error('Supabase server configuration is missing')
+  let request = supabase.from('games_catalog')
+    .select('id,catalog_key,steam_app_id,igdb_id,rawg_id,title,slug,release_year,developer,publisher,summary,genres,platforms,cover_url,backdrop_url,artwork_grid_url,artwork_hero_url,rating_avg,rating_count,metacritic_score,co_op,multiplayer,metadata_provider')
+    .order('rating_count', { ascending: false }).order('rating_avg', { ascending: false }).limit(Math.min(Math.max(limit, 1), 100))
+  if (platform) request = request.contains('platforms', [platform])
+  if (genre) request = request.contains('genres', [genre])
+  const [{ data: catalog, error: catalogError }, { data: owned, error: ownedError }] = await Promise.all([
+    request,
+    supabase.from('user_games').select('catalog_id').eq('user_id', userId),
+  ])
+  if (catalogError) throw catalogError
+  if (ownedError) throw ownedError
+  const ownedIds = new Set((owned || []).map((game) => game.catalog_id))
+  return (catalog || []).filter((game) => !ownedIds.has(game.id))
+}
+
+export const getReviewsFeed = async (userId, { catalogId, limit = 40 } = {}) => {
+  if (!supabase) throw new Error('Supabase server configuration is missing')
+  let request = supabase.from('user_games').select('id,user_id,catalog_id,rating,review_text,updated_at')
+    .not('review_text', 'is', null).neq('review_text', '').order('updated_at', { ascending: false })
+    .limit(catalogId ? 1000 : 500)
+  if (catalogId) request = request.eq('catalog_id', catalogId)
+  const { data: reviewRows, error } = await request
+  if (error) throw error
+  const rows = reviewRows || []
+  if (!rows.length) return []
+  const userIds = [...new Set(rows.map((review) => review.user_id))]
+  const catalogIds = [...new Set(rows.map((review) => review.catalog_id))]
+  const [{ data: profiles, error: profileError }, { data: games, error: gameError }] = await Promise.all([
+    supabase.from('profiles').select('steam_id,username,avatar_url,is_public').in('steam_id', userIds),
+    supabase.from('games_catalog').select('id,title,release_year,platforms,genres,cover_url,backdrop_url,artwork_grid_url,artwork_hero_url,metacritic_score,rating_avg,rating_count').in('id', catalogIds),
+  ])
+  if (profileError) throw profileError
+  if (gameError) throw gameError
+  const profileById = new Map((profiles || []).map((profile) => [profile.steam_id, profile]))
+  const gameById = new Map((games || []).map((game) => [game.id, game]))
+  return rows.filter((review) => review.user_id === userId || profileById.get(review.user_id)?.is_public)
+    .map((review) => ({
+      ...review,
+      author: { username: profileById.get(review.user_id)?.username || 'RetroVault player', avatar_url: profileById.get(review.user_id)?.avatar_url || null },
+      game: gameById.get(review.catalog_id) || null,
+      is_mine: review.user_id === userId,
+    })).filter((review) => review.game).slice(0, Math.min(Math.max(limit, 1), 100))
 }
 
 export const upsertCatalogRows = async (rows, conflict = 'catalog_key') => {

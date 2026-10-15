@@ -1,20 +1,23 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" shape-rendering="crispEdges" role="img" aria-labelledby="title">
-  <title id="title">RetroVault pixel vault emblem</title>
-  <rect x="12" y="8" width="72" height="8" fill="#dce9c8"/>
-  <rect x="8" y="16" width="8" height="64" fill="#dce9c8"/>
-  <rect x="80" y="16" width="8" height="64" fill="#dce9c8"/>
-  <rect x="16" y="80" width="64" height="8" fill="#dce9c8"/>
-  <rect x="16" y="16" width="64" height="64" fill="#66744c"/>
-  <rect x="24" y="24" width="48" height="48" fill="#22271c"/>
-  <rect x="32" y="32" width="32" height="32" fill="#3a4430"/>
-  <rect x="40" y="24" width="16" height="8" fill="#a9d4ff"/>
-  <rect x="40" y="64" width="16" height="8" fill="#a9d4ff"/>
-  <rect x="24" y="40" width="8" height="16" fill="#a9d4ff"/>
-  <rect x="64" y="40" width="8" height="16" fill="#a9d4ff"/>
-  <rect x="40" y="40" width="16" height="16" fill="#dce9c8"/>
-  <rect x="44" y="44" width="8" height="8" fill="#8d9e68"/>
-  <rect x="44" y="44" width="4" height="4" fill="#fff1ad"/>
-  <rect x="4" y="28" width="4" height="8" fill="#78905b"/>
-  <rect x="88" y="60" width="4" height="8" fill="#78905b"/>
-  <rect x="28" y="92" width="8" height="4" fill="#78905b"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" shape-rendering="crispEdges" role="img" aria-labelledby="title desc">
+  <title id="title">RetroVault pixel-art vault</title>
+  <desc id="desc">A heavy steel vault door with a bright golden combination lock.</desc>
+  <path fill="#080d16" d="M24 8h80v8h8v96h-8v8H24v-8h-8V16h8z"/>
+  <path fill="#426176" d="M24 16h80v8h8v80h-8v8H24v-8h-8V24h8z"/>
+  <path fill="#9eb6b6" d="M32 20h64v4h8v8h4v64h-4v8h-8v4H32v-4h-8v-8h-4V32h4v-8h8z"/>
+  <path fill="#263b4a" d="M32 28h64v4h8v64h-8v4H32v-4h-8V32h8z"/>
+  <path fill="#0e1c28" d="M56 28h16v4h12v4h8v8h4v40h-4v8h-8v4H44v-4h-8v-8h-4V44h4v-8h8v-4h12z"/>
+  <path fill="#1e3c4d" d="M56 32h16v4h12v4h8v8h4v32h-4v8h-8v4H44v-4h-8V48h4v-8h8v-4h8z"/>
+  <path fill="#47717b" d="M56 36h16v4h8v4h8v8h4v24h-4v8h-8v4H48v-4h-8V52h4v-8h8v-4h4z"/>
+  <path fill="#86a9a6" d="M56 40h16v4h8v4h8v8h4v16h-4v8h-8v4H48v-4h-8V56h4v-8h8v-4h4z"/>
+  <path fill="#c4d1bd" d="M56 44h16v4h8v4h4v8h4v12h-4v4h-8v4H52v-4h-8V60h4v-8h8v-4h4z"/>
+  <path fill="#e9bd58" d="M60 48h8v4h8v4h4v8h4v8h-4v4h-8v4h-8v-4h-8v-4h-4v-8h-4v-8h4v-4h8z"/>
+  <path fill="#8d542d" d="M60 52h8v4h8v4h4v8h-4v4h-8v4h-8v-4h-8v-8h4v-8h4z"/>
+  <path fill="#f6d778" d="M60 56h8v4h8v4h-4v4h-8v4h-4v-4h-4v-8h4z"/>
+  <path fill="#142536" d="M70 60h14v4h4v8h-4v4H70v-4h-4v-8h4z"/>
+  <path fill="#d8e2d4" d="M74 64h8v4h-8zM20 32h8v8h-8zM100 32h8v8h-8zM20 88h8v8h-8zM100 88h8v8h-8z"/>
+  <path fill="#e8bb5a" d="M32 16h8v4h-8zM88 16h8v4h-8zM32 108h8v4h-8zM88 108h8v4h-8zM16 52h4v8h-4zM108 52h4v8h-4z"/>
+  <path fill="#d7ded1" d="M48 108h32v8H48z"/>
+  <path fill="#324657" d="M52 110h24v4H52z"/>
+  <path fill="#dfe6d8" d="M60 110h8v4h-8z"/>
+  <path fill="#ba713c" d="M8 44h8v40H8zM112 44h8v40h-8zM40 120h48v4H40z"/>
 </svg>

@@ -6,12 +6,13 @@ RetroVault is a Steam-connected game collection and playtime tracker. Steam Open
 
 - **Steam sign-in:** Steam OpenID 2.0 is verified server-side. The backend issues a 30-day HMAC-signed, `HttpOnly`, `SameSite=Lax` session cookie; production cookies use `Secure`.
 - **Steam library sync:** imports owned games, app IDs, total playtime and last-played times. Re-syncing preserves the player's status, rating, notes and favorites. A sync records increases in Steam playtime as activity deltas.
-- **Shared catalog cache:** Steam games share one `games_catalog` row across players. Catalog search checks Supabase first and, on a cache miss, optionally fetches RAWG results and stores them. Steam Store details are fetched lazily for up to 12 uncached/incomplete entries during sync, including release year, developer, publisher, short summary, genres and artwork.
+- **Cross-platform game discovery:** browse a curated set of platform and genre recommendations from the no-key GameDB/IGDB catalog, combined with games already indexed in RetroVault. Add results directly to Backlog. The dedicated **Add Games** search merges RetroVault with GameDB title buckets.
+- **Separate Steam sync:** Steam import stays in the Library and continues tracking Steam playtime. Manually added console and PC editions use the same catalog, with the selected platform stored on your collection entry.
 - **Personal collection:** add manually, track a status, set a 1–10 rating, favorite a title, edit notes, or remove it from your collection.
 - **Collection views:** poster grid or compact list, search and status filters, completion totals, backlog size and Steam playtime.
 - **Paged library:** 24 games per page, with page controls that follow the active search and status filters.
-- **Game dossiers:** click a game's poster or title to see its description, available Metacritic score, developer/publisher, screenshots and store links.
-- **SteamGridDB artwork:** with `STEAMGRIDDB_API_KEY` configured, RetroVault fetches and caches community grids, heroes and logos the first time a Steam game's details are opened. Steam artwork remains the fallback.
+- **Game dossiers and artwork:** click a game's poster or title to see its description, available Steam Metacritic score, developer/publisher, screenshots and store links. GameDB/IGDB provide cross-platform metadata and covers; SteamGridDB can find community grids, heroes and logos by either Steam app ID or exact game title. When a manually entered title has no catalog image, RetroVault tries the configured artwork provider on save.
+- **Player reviews:** write a 1–10 rating and text review for any game in your collection. The Reviews page shows your reviews and reviews from players whose profiles are public. Steam game dossiers can also show recent Steam community reviews.
 - **VGUI interface:** four selectable skins—VGUI Olive, Source Obsidian, HEV Hazard and LAN Party 98—with optional custom background, panel, accent and text colors.
 - **Activity:** a chronological feed of playtime increases recorded during sync.
 - **Public profiles:** profiles are private by default. A player can opt in to a public collection page and a dynamic SVG completion badge.
@@ -47,12 +48,14 @@ The migrations preserve the original `public.games` table and its 366 imported r
 | Table | Purpose |
 | --- | --- |
 | `public.profiles` | Steam identity, avatar, profile URL, theme settings and public/private preference. Public sharing is off by default. |
-| `public.games_catalog` | Shared game metadata keyed by Steam, legacy, or manual catalog keys; includes IDs for Steam, IGDB and RAWG, title, release details, genres, artwork, co-op flags and catalog rating rollups. |
+| `public.games_catalog` | Shared game metadata keyed by Steam, IGDB, legacy, or manual catalog keys; includes title, release details, genres, artwork, co-op flags and catalog rating rollups. |
 | `public.user_games` | Per-player status, rating, platform, playtime, last played time, favorite, notes, review and purchase price. A player can have a title once. |
 | `public.play_logs` | Positive playtime deltas linked to a player's collection entry and catalog title. A unique total-playtime constraint makes repeated syncs idempotent. |
 | `public.games` | Original schema retained with its existing data; the current application writes to the normalized tables above. |
 
-The rating trigger recalculates a catalog game's average and rating count when a user changes their rating. The `pg_trgm` extension and title index support catalog title search. Search checks the cache first and fills it from RAWG when `RAWG_API_KEY` is configured and there are no matching cached titles.
+The rating trigger recalculates a catalog game's average and rating count when a user changes their rating. The `pg_trgm` extension and title index support catalog title search. GameDB's searchable title buckets and per-game records provide the external cross-platform catalog; discovery filters a curated selection of popular games by platform and genre, then combines it with the shared RetroVault catalog. If a release is missing, search GameDB or add it manually.
+
+GameDB publishes lightweight name-search buckets and per-game JSON records; RetroVault fetches a bucket during search and requests platform/game details as needed. The source data is based on IGDB and is credited in the Add Games and Discover screens alongside [LizardByte GameDB](https://github.com/LizardByte/GameDB).
 
 ## Run locally
 
@@ -104,8 +107,7 @@ Vite proxies `/api/*` and `/auth/*` to Express on port `3001`. The frontend defa
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Server-only database key. Do not expose it to the browser or commit it. |
 | `SESSION_SECRET` | Yes | Long random secret used to sign session cookies. |
 | `STEAM_API_KEY` | For profile details and library sync | Steam Web API key, used only by Express. Steam OpenID sign-in itself does not require this key. |
-| `RAWG_API_KEY` | Optional | Enables external catalog search fallback and caches returned RAWG metadata. |
-| `STEAMGRIDDB_API_KEY` | Optional | Enables SteamGridDB grid, hero and logo artwork in game detail views. Keep it on the Express server. |
+| `STEAMGRIDDB_API_KEY` | Optional | Enables SteamGridDB grid, hero and logo artwork for Steam and non-Steam games. Keep it on the Express server. |
 | `APP_URL` | Production | Public origin used to construct Steam's OpenID callback, e.g. `https://vault.example.com`. |
 | `PORT` | Optional | Express port; defaults to `3001`. |
 | `NODE_ENV` | Production | Set to `production` to use `Secure` cookies. |
@@ -130,7 +132,11 @@ Private routes require the signed Steam session cookie unless noted.
 | `DELETE` | `/api/games/:id` | Removes the caller's collection entry. |
 | `GET` | `/api/profile` | Reads the current player's settings. |
 | `PATCH` | `/api/profile` | Updates `preferred_theme`, `custom_theme`, or `is_public`. |
-| `GET` | `/api/catalog/search?q=...` | Searches the shared catalog cache and optionally fills it from RAWG on a cache miss. |
+| `GET` | `/api/catalog/search?q=...` | Merges RetroVault matches with GameDB cross-platform title suggestions. |
+| `GET` | `/api/catalog/discover?platform=...&genre=...&page=...` | Recommends games by platform or genre while excluding titles already in the caller's library. |
+| `GET` | `/api/reviews?limit=...` | Returns recent reviews from public profiles and the caller's own reviews. |
+| `GET` | `/api/catalog/:catalogId/reviews` | Returns reviews for a title, respecting each profile's public/private setting. |
+| `GET` | `/api/catalog/:catalogId/details` | Loads details and artwork for a catalog game before it is added to a user's collection. |
 | `GET` | `/api/steam/library` | Imports visible Steam games, writes playtime deltas and performs bounded Steam Store enrichment. |
 | `GET` | `/api/activity?limit=100` | Lists recent playtime delta records. |
 | `GET` | `/api/public/profiles/:steamId` | Public profile summary and collection; only available after the owner opts in. |
