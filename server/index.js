@@ -91,6 +91,80 @@ const stripHtml = (html = '') => html
   .replace(/\n\s+/g, '\n')
   .trim()
 
+const rawgResponseCache = new Map()
+const fetchRawgApi = async (path, params = {}, ttlMs = 60 * 60 * 1000) => {
+  const apiKey = process.env.RAWG_API_KEY
+  if (!apiKey) throw new Error('Add RAWG_API_KEY to .env to search the RAWG catalog.')
+  const cacheKey = `${path}?${new URLSearchParams(params)}`
+  const cached = rawgResponseCache.get(cacheKey)
+  if (cached?.expiresAt > Date.now()) return cached.data
+  const url = new URL(`https://api.rawg.io/api/${path}`)
+  for (const [name, value] of Object.entries(params)) url.searchParams.set(name, String(value))
+  url.searchParams.set('key', apiKey)
+  const response = await fetch(url, { signal: AbortSignal.timeout(10000) })
+  if (!response.ok) throw new Error(`RAWG request failed (${response.status}).`)
+  const data = await response.json()
+  rawgResponseCache.set(cacheKey, { data, expiresAt: Date.now() + ttlMs })
+  if (rawgResponseCache.size > 400) rawgResponseCache.delete(rawgResponseCache.keys().next().value)
+  return data
+}
+
+const mapRawgSearchResult = (game) => ({
+  id: `rawg:${game.id}`,
+  rawg_id: Number(game.id),
+  title: game.name,
+  slug: game.slug || null,
+  release_year: Number(game.released?.slice(0, 4)) || null,
+  genres: (game.genres || []).map((genre) => genre.name).filter(Boolean),
+  platforms: (game.platforms || []).map((entry) => entry.platform?.name).filter(Boolean),
+  cover_url: game.background_image || '',
+  backdrop_url: game.background_image_additional || game.background_image || '',
+  metacritic_score: game.metacritic ?? null,
+  rawg_rating: Number(game.rating) || null,
+  rawg_rating_count: Number(game.ratings_count) || 0,
+  metadata_provider: 'rawg',
+})
+
+const searchRawgGames = async (query) => {
+  const response = await fetchRawgApi('games', { search: query, page_size: 10 }, 15 * 60 * 1000)
+  return (response.results || []).filter((game) => game.id && game.name).map(mapRawgSearchResult)
+}
+
+const fetchRawgGameDetails = async (rawgId) => {
+  const [game, screenshotPage] = await Promise.all([
+    fetchRawgApi(`games/${rawgId}`, {}, 6 * 60 * 60 * 1000),
+    fetchRawgApi(`games/${rawgId}/screenshots`, { page_size: 10 }, 24 * 60 * 60 * 1000).catch(() => ({ results: [] })),
+  ])
+  if (!game?.id || !game?.name) throw new Error('RAWG returned incomplete game details.')
+  const releaseYear = Number(game.released?.slice(0, 4)) || null
+  const catalog = {
+    catalog_key: `rawg:${game.id}`,
+    rawg_id: Number(game.id),
+    title: game.name,
+    slug: game.slug || null,
+    release_year: releaseYear,
+    developer: (game.developers || []).map((entry) => entry.name).filter(Boolean).slice(0, 3).join(', ') || null,
+    publisher: (game.publishers || []).map((entry) => entry.name).filter(Boolean).slice(0, 3).join(', ') || null,
+    summary: stripHtml(game.description_raw || game.description || '').slice(0, 12000) || null,
+    genres: (game.genres || []).map((genre) => genre.name).filter(Boolean),
+    platforms: (game.platforms || []).map((entry) => entry.platform?.name).filter(Boolean),
+    cover_url: game.background_image || null,
+    backdrop_url: game.background_image_additional || game.background_image || null,
+    metacritic_score: game.metacritic ?? null,
+    metacritic_url: game.metacritic_url || null,
+    screenshots: (screenshotPage.results || []).map((shot) => shot.image).filter(Boolean).slice(0, 10),
+    metadata_provider: 'rawg',
+    metadata_updated_at: new Date().toISOString(),
+    details_updated_at: new Date().toISOString(),
+  }
+  return {
+    catalog,
+    rawg_rating: Number(game.rating) || null,
+    rawg_rating_count: Number(game.ratings_count) || 0,
+    rawg_reviews_text_count: Number.parseInt(game.reviews_text_count, 10) || 0,
+  }
+}
+
 const fetchSteamGridDBArtwork = async (steamAppId) => {
   const apiKey = process.env.STEAMGRIDDB_API_KEY
   if (!apiKey) return {}
@@ -139,28 +213,95 @@ const fetchSteamGridDBArtworkByName = async (title) => {
   return { artwork_grid_url: grid, artwork_hero_url: hero, artwork_logo_url: logo }
 }
 
-const fetchSteamCommunityReviews = async (steamAppId) => {
-  const response = await fetch(`https://store.steampowered.com/appreviews/${steamAppId}?${new URLSearchParams({ json: '1', language: 'all', review_type: 'all', purchase_type: 'all', num_per_page: '10', filter: 'recent' })}`, { signal: AbortSignal.timeout(8000) })
-  if (!response.ok) return []
+const steamReviewCache = new Map()
+const fetchSteamCommunityReviews = async (steamAppId, { sort = 'helpful', sentiment = 'all' } = {}) => {
+  const cacheKey = `${steamAppId}:${sort}:${sentiment}`
+  const cached = steamReviewCache.get(cacheKey)
+  if (cached?.expiresAt > Date.now()) return cached.data
+  const params = new URLSearchParams({
+    json: '1', language: 'english', review_type: sentiment, purchase_type: 'all',
+    num_per_page: '20', filter: sort === 'helpful' ? 'all' : sort,
+  })
+  if (sort === 'helpful') params.set('day_range', '365')
+  const response = await fetch(`https://store.steampowered.com/appreviews/${steamAppId}?${params}`, { signal: AbortSignal.timeout(9000) })
+  if (!response.ok) throw new Error(`Steam reviews failed (${response.status}).`)
   const body = await response.json()
-  return (body.reviews || []).map((review) => ({
-    author: review.author?.steamid ? `Steam player ${review.author.steamid.slice(-5)}` : 'Steam player',
-    text: review.review,
-    recommended: Boolean(review.voted_up),
-    helpful: review.votes_up || 0,
-    created_at: review.timestamp_created ? new Date(review.timestamp_created * 1000).toISOString() : null,
-    source: 'Steam',
-  })).filter((review) => review.text).slice(0, 10)
+  const result = {
+    total_reviews: Number(body.query_summary?.total_reviews) || 0,
+    reviews: (body.reviews || []).map((review) => ({
+      review_id: review.recommendationid,
+      author: review.author?.steamid ? `Steam player ${review.author.steamid.slice(-5)}` : 'Steam player',
+      text: review.review,
+      recommended: Boolean(review.voted_up),
+      helpful: Number(review.votes_up) || 0,
+      weighted_vote_score: Number(review.weighted_vote_score) || 0,
+      funny: Number(review.votes_funny) || 0,
+      playtime_minutes: Number(review.author?.playtime_forever) || 0,
+      language: 'English',
+      created_at: review.timestamp_created ? new Date(review.timestamp_created * 1000).toISOString() : null,
+      source: 'Steam',
+    })).filter((review) => review.text).slice(0, 20),
+  }
+  steamReviewCache.set(cacheKey, { data: result, expiresAt: Date.now() + 15 * 60 * 1000 })
+  if (steamReviewCache.size > 400) steamReviewCache.delete(steamReviewCache.keys().next().value)
+  return result
+}
+
+const normalizeGameTitle = (title = '') => title.toLocaleLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, '')
+const findRawgTitleMatch = async (title, releaseYear) => {
+  const normalizedTitle = normalizeGameTitle(title)
+  if (!normalizedTitle) return null
+  const matches = (await searchRawgGames(title)).filter((game) => normalizeGameTitle(game.title) === normalizedTitle)
+  const compatible = matches.filter((game) => !releaseYear || !game.release_year || Math.abs(releaseYear - game.release_year) <= 2)
+  return compatible.sort((a, b) => (b.rawg_rating_count || 0) - (a.rawg_rating_count || 0))[0] || null
+}
+
+const enrichCatalogFromRawg = async (cached, rawgId) => {
+  const { catalog, ...rawgRatings } = await fetchRawgGameDetails(rawgId)
+  const metadata = {
+    ...catalog,
+    rawg_id: Number(rawgId),
+    cover_url: catalog.cover_url || cached.cover_url,
+    backdrop_url: catalog.backdrop_url || cached.backdrop_url,
+    metacritic_score: catalog.metacritic_score ?? cached.metacritic_score,
+    metacritic_url: catalog.metacritic_url || cached.metacritic_url,
+    screenshots: catalog.screenshots.length ? catalog.screenshots : cached.screenshots,
+  }
+  let updated
+  try {
+    updated = await updateCatalogDetails(cached.id, metadata) || { ...cached, ...metadata }
+  } catch (error) {
+    if (error.code !== '23505') throw error
+    // Another catalog row may already represent this RAWG title; still use its metadata for this view.
+    const metadataWithoutRawgId = Object.fromEntries(Object.entries(metadata).filter(([key]) => key !== 'rawg_id'))
+    updated = await updateCatalogDetails(cached.id, metadataWithoutRawgId) || { ...cached, ...metadataWithoutRawgId }
+  }
+  return { ...updated, rawg_id: Number(rawgId), ...rawgRatings }
 }
 
 const enrichCatalogDetails = async (cached) => {
   const fresh = cached.details_updated_at && Date.now() - new Date(cached.details_updated_at).getTime() < 30 * 24 * 60 * 60 * 1000
   const noArtwork = !cached.artwork_grid_url && !cached.cover_url && !cached.backdrop_url
-  if (fresh && !noArtwork && (!cached.steam_app_id || !process.env.STEAMGRIDDB_API_KEY || cached.artwork_grid_url)) {
-    if (!cached.steam_app_id) return cached
-    try { return { ...cached, community_reviews: await fetchSteamCommunityReviews(cached.steam_app_id) } }
-    catch { return { ...cached, community_reviews: [] } }
+  if (cached.rawg_id && process.env.RAWG_API_KEY) {
+    try {
+      if (fresh && !noArtwork) {
+        const { rawg_rating, rawg_rating_count } = await fetchRawgApi(`games/${cached.rawg_id}`, {}, 6 * 60 * 60 * 1000)
+          .then((game) => ({ rawg_rating: Number(game.rating) || null, rawg_rating_count: Number(game.ratings_count) || 0 }))
+        return { ...cached, rawg_rating, rawg_rating_count }
+      }
+      return await enrichCatalogFromRawg(cached, cached.rawg_id)
+    } catch (error) {
+      console.warn(`RAWG details unavailable for ${cached.title}:`, error.message)
+      return cached
+    }
   }
+  if (!cached.rawg_id && process.env.RAWG_API_KEY) {
+    try {
+      const match = await findRawgTitleMatch(cached.title, cached.release_year)
+      if (match) return await enrichCatalogFromRawg(cached, match.rawg_id)
+    } catch (error) { console.warn(`RAWG match unavailable for ${cached.title}:`, error.message) }
+  }
+  if (fresh && !noArtwork && (!cached.steam_app_id || !process.env.STEAMGRIDDB_API_KEY || cached.artwork_grid_url)) return cached
 
   const details = { details_updated_at: new Date().toISOString() }
   if (cached.steam_app_id && !fresh) {
@@ -194,12 +335,8 @@ const enrichCatalogDetails = async (cached) => {
       catch (error) { console.warn(`SteamGridDB artwork unavailable for ${cached.title}:`, error.message) }
     }
   }
-  if (cached.steam_app_id) {
-    try { details.community_reviews = await fetchSteamCommunityReviews(cached.steam_app_id) }
-    catch (error) { console.warn(`Steam reviews unavailable for ${cached.title}:`, error.message) }
-  }
   const updated = await updateCatalogDetails(cached.id, details) || cached
-  return { ...updated, community_reviews: details.community_reviews || [] }
+  return updated
 }
 const loadGameDetails = async (userId, userGameId) => enrichCatalogDetails(await getCatalogGameForUser(userId, userGameId))
 
@@ -289,7 +426,7 @@ const steamCatalogRow = (steamAppId, game) => {
 }
 
 app.get('/api/health', async (_req, res) => {
-  res.json({ ok: true, supabase: Boolean(supabase), steamApi: Boolean(process.env.STEAM_API_KEY), sessionSecret: Boolean(SESSION_SECRET) })
+  res.json({ ok: true, supabase: Boolean(supabase), steamApi: Boolean(process.env.STEAM_API_KEY), rawgApi: Boolean(process.env.RAWG_API_KEY), sessionSecret: Boolean(SESSION_SECRET) })
 })
 app.get('/auth/steam', (req, res) => {
   if (!SESSION_SECRET) return res.status(503).send('Set SESSION_SECRET in .env before signing in.')
@@ -606,12 +743,14 @@ const discoverGameDbGames = async ({ platform = '', genre = '' }) => {
 
 app.get('/api/catalog/search', requireUser, async (req, res) => {
   const query = String(req.query.q || '').trim().slice(0, 100)
-  if (query.length < 2) return res.json({ results: [], cached: true, providerAvailable: true, providers: ['gamedb', 'retrovault'] })
+  if (query.length < 2) return res.json({ results: [], cached: true, providerAvailable: true, providers: ['RAWG', 'GameDB', 'RetroVault'] })
   try {
-    const providerTasks = [
-      searchCatalog(query, 30).then((games) => ({ kind: 'local', games })),
-      searchGameDb(query).then((games) => ({ kind: 'gamedb', games })),
+    const providers = [
+      { kind: 'local', name: 'RetroVault', task: searchCatalog(query, 30) },
+      { kind: 'gamedb', name: 'GameDB', task: searchGameDb(query) },
+      ...(process.env.RAWG_API_KEY ? [{ kind: 'rawg', name: 'RAWG', task: searchRawgGames(query) }] : []),
     ]
+    const providerTasks = providers.map(({ kind, task }) => task.then((games) => ({ kind, games })))
     const settled = await Promise.allSettled(providerTasks)
     const resultsByProvider = new Map()
     let providerError = false
@@ -620,18 +759,27 @@ app.get('/api/catalog/search', requireUser, async (req, res) => {
       if (result.status === 'fulfilled') resultsByProvider.set(result.value.kind, result.value.games)
       else {
         providerError = true
-        console.warn(`${['RetroVault', 'GameDB'][index]} catalog search failed:`, result.reason?.message || result.reason)
+        console.warn(`${providers[index].name} catalog search failed:`, result.reason?.message || result.reason)
       }
     }
     const localGames = resultsByProvider.get('local') || []
     const gameDbGames = resultsByProvider.get('gamedb') || []
-    const byId = new Map(localGames.map((game) => [game.id, game]))
+    const rawgGames = resultsByProvider.get('rawg') || []
+    const byTitle = new Map(localGames.map((game) => [game.title.toLocaleLowerCase(), game]))
+    for (const game of rawgGames) {
+      const titleKey = game.title.toLocaleLowerCase()
+      if (!byTitle.has(titleKey)) byTitle.set(titleKey, game)
+    }
+    for (const game of gameDbGames) {
+      const titleKey = game.title.toLocaleLowerCase()
+      if (!byTitle.has(titleKey)) byTitle.set(titleKey, game)
+    }
     const normalized = query.toLocaleLowerCase()
-    const results = [...byId.values(), ...gameDbGames.filter((game) => ![...byId.values()].some((existing) => existing.title.toLocaleLowerCase() === game.title.toLocaleLowerCase()))].sort((a, b) => {
+    const results = [...byTitle.values()].sort((a, b) => {
       const rank = (title) => title.toLocaleLowerCase() === normalized ? 0 : title.toLocaleLowerCase().startsWith(normalized) ? 1 : title.toLocaleLowerCase().includes(normalized) ? 2 : 3
-      return rank(a.title) - rank(b.title) || (b.rating_count || 0) - (a.rating_count || 0)
+      return rank(a.title) - rank(b.title) || (b.rawg_rating_count || b.rating_count || 0) - (a.rawg_rating_count || a.rating_count || 0)
     })
-    res.json({ results: results.slice(0, 30), cached: false, providerAvailable: true, providers: ['GameDB', 'RetroVault'], providerError })
+    res.json({ results: results.slice(0, 30), cached: false, providerAvailable: true, providers: providers.map((provider) => provider.name), providerError })
   } catch (error) { res.status(500).json({ message: error.message }) }
 })
 app.post('/api/catalog/gamedb/:igdbId', requireUser, async (req, res) => {
@@ -642,6 +790,27 @@ app.post('/api/catalog/gamedb/:igdbId', requireUser, async (req, res) => {
     if (error) throw error
     res.json(data)
   } catch (error) { res.status(502).json({ message: error.message || 'Could not load GameDB details.' }) }
+})
+app.post('/api/catalog/rawg/:rawgId', requireUser, async (req, res) => {
+  if (!/^\d{1,12}$/.test(req.params.rawgId)) return res.status(400).json({ message: 'Invalid RAWG game ID.' })
+  if (!process.env.RAWG_API_KEY) return res.status(503).json({ message: 'Add RAWG_API_KEY to .env to use RAWG game details.' })
+  try {
+    const { catalog, ...rawgRatings } = await fetchRawgGameDetails(req.params.rawgId)
+    const { data, error } = await supabase.from('games_catalog').upsert(catalog, { onConflict: 'rawg_id' })
+      .select('id,catalog_key,steam_app_id,igdb_id,rawg_id,title,slug,release_year,developer,publisher,summary,genres,platforms,cover_url,backdrop_url,metacritic_score,metacritic_url,screenshots,rating_avg,rating_count,co_op,multiplayer,metadata_provider')
+      .single()
+    if (error) throw error
+    res.json({ ...data, ...rawgRatings })
+  } catch (error) { res.status(502).json({ message: error.message || 'Could not load RAWG game details.' }) }
+})
+app.get('/api/steam/reviews/:steamAppId', requireUser, async (req, res) => {
+  if (!/^\d{1,10}$/.test(req.params.steamAppId)) return res.status(400).json({ message: 'Invalid Steam app ID.' })
+  const sort = String(req.query.sort || 'helpful')
+  const sentiment = String(req.query.sentiment || 'all')
+  if (!['helpful', 'recent', 'updated'].includes(sort)) return res.status(400).json({ message: 'Choose helpful, recent, or updated review order.' })
+  if (!['all', 'positive', 'negative'].includes(sentiment)) return res.status(400).json({ message: 'Choose all, positive, or negative Steam reviews.' })
+  try { res.json(await fetchSteamCommunityReviews(req.params.steamAppId, { sort, sentiment })) }
+  catch (error) { res.status(502).json({ message: error.message || 'Steam reviews are unavailable right now.' }) }
 })
 app.get('/api/steam/library', requireUser, async (req, res) => {
   if (!process.env.STEAM_API_KEY) return res.status(503).json({ message: 'Add STEAM_API_KEY to .env to sync your library.' })

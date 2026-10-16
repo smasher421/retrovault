@@ -65,6 +65,9 @@ function App() {
   const [games, setGames] = useState([])
   const [logs, setLogs] = useState([])
   const [reviews, setReviews] = useState([])
+  const [reviewFeedSort, setReviewFeedSort] = useState('recent')
+  const [reviewGameFilter, setReviewGameFilter] = useState('all')
+  const [steamReviewAppId, setSteamReviewAppId] = useState('')
   const [discoveryGames, setDiscoveryGames] = useState([])
   const [discoveryLoading, setDiscoveryLoading] = useState(false)
   const [discoveryMessage, setDiscoveryMessage] = useState('')
@@ -193,6 +196,19 @@ function App() {
   const visibleSuggestions = suggestions.filter((game) =>
     (catalogPlatformFilter === 'All platforms' || game.platforms?.includes(catalogPlatformFilter)) &&
     (catalogGenreFilter === 'All genres' || game.genres?.includes(catalogGenreFilter)))
+  const reviewGameOptions = useMemo(() => {
+    const gamesById = new Map()
+    for (const review of reviews) if (review.game) gamesById.set(String(review.catalog_id), review.game.title)
+    return [...gamesById].map(([id, title]) => ({ id, title })).sort((a, b) => a.title.localeCompare(b.title))
+  }, [reviews])
+  const visibleReviews = useMemo(() => reviews
+    .filter((review) => reviewGameFilter === 'all' || String(review.catalog_id) === reviewGameFilter)
+    .sort((a, b) => {
+      if (reviewFeedSort === 'rating') return (b.rating || 0) - (a.rating || 0) || new Date(b.updated_at) - new Date(a.updated_at)
+      return new Date(b.updated_at) - new Date(a.updated_at)
+    }), [reviews, reviewFeedSort, reviewGameFilter])
+  const steamReviewGames = useMemo(() => games.filter((game) => game.steam_app_id).sort((a, b) => a.title.localeCompare(b.title)), [games])
+  const selectedSteamReviewGame = steamReviewGames.find((game) => String(game.steam_app_id) === steamReviewAppId) || steamReviewGames[0] || null
 
   const notifyError = async (response) => {
     const error = await response.json().catch(() => ({}))
@@ -244,6 +260,11 @@ function App() {
         const response = await fetch(`/api/catalog/gamedb/${game.gamedb_id}`, { method: 'POST' })
         const result = await readJsonResponse(response)
         if (!response.ok) throw new Error(result.message || 'Could not load game metadata.')
+        game = result
+      } else if (game.rawg_id && String(game.id).startsWith('rawg:')) {
+        const response = await fetch(`/api/catalog/rawg/${game.rawg_id}`, { method: 'POST' })
+        const result = await readJsonResponse(response)
+        if (!response.ok) throw new Error(result.message || 'Could not load RAWG game metadata.')
         game = result
       }
     } catch (error) {
@@ -496,20 +517,21 @@ function App() {
       <p className="catalog-attribution">Game metadata and discovery from <a href="https://github.com/LizardByte/GameDB" target="_blank" rel="noreferrer">LizardByte GameDB</a> (IGDB based), combined with your shared RetroVault catalog. Community art by <a href="https://www.steamgriddb.com/" target="_blank" rel="noreferrer">SteamGridDB</a>.</p>
     </section>}
 
-    {tab === 'Reviews' && <section className="vgui-window content-window reviews-window"><div className="section-heading"><div><small>COMMUNITY NOTES // PUBLIC PROFILES</small><h1>Reviews</h1><p>Read public RetroVault player reviews and write one for any title in your library.</p></div><span>{reviews.length} reviews</span></div>
+    {tab === 'Reviews' && <section className="vgui-window content-window reviews-window"><div className="section-heading"><div><small>COMMUNITY NOTES // PUBLIC PROFILES</small><h1>Reviews</h1><p>Read English Steam community reviews and public RetroVault player reviews.</p></div><span>{reviews.length} RetroVault reviews</span></div>
       <div className="review-write-shortcut"><b>Your games</b><span>Choose a game to write or update your review.</span></div>
       {games.length > 0 && <div className="review-owned-games">{games.slice(0, 12).map((game) => <button className="review-game-chip" key={game.id} onClick={() => openDetails(game)}><GameCover title={game.title} cover={game.cover_image} backdrop={game.backdrop_url}/><span><b>{game.title}</b><small>{game.rating ? `${game.rating}/10` : 'Not rated'} · {game.review_text?.trim() ? 'Edit review' : 'Write review'}</small></span>›</button>)}</div>}
-      <div className="review-feed-heading"><h2>Recent player reviews</h2><button className="button small" onClick={async () => { const response = await fetch('/api/reviews?limit=40'); if (response.ok) setReviews(await response.json()) }}>Refresh</button></div>
-      {reviews.length ? <div className="review-feed">{reviews.map((review) => <article className="review-card" key={review.id}><div className="review-game-cover"><GameCover title={review.game.title} cover={review.game.artwork_grid_url || review.game.cover_url} backdrop={review.game.artwork_hero_url || review.game.backdrop_url}/></div><div className="review-content"><div className="review-card-heading"><div><b>{review.game.title}</b><small>{review.author.username} · {new Date(review.updated_at).toLocaleDateString()}</small></div><strong>{review.rating ? `${review.rating}/10` : '—'}</strong></div><p>{review.review_text}</p><button className="button small" onClick={() => { const ownedGame = games.find((game) => game.catalog_id === review.catalog_id); ownedGame ? openDetails(ownedGame) : openCatalogDetails({ ...review.game, id: review.catalog_id }) }}>{review.is_mine ? 'Edit your review' : 'Game details'}</button></div></article>)}</div> : <div className="empty-state">No public reviews yet. Open one of your games and be the first to share a review.</div>}
+      {selectedSteamReviewGame ? <><div className="steam-review-game-select"><label>Steam game<select value={selectedSteamReviewGame.steam_app_id} onChange={(event) => setSteamReviewAppId(event.target.value)}>{steamReviewGames.map((game) => <option key={game.steam_app_id} value={game.steam_app_id}>{game.title}</option>)}</select></label></div><SteamReviewsPanel key={selectedSteamReviewGame.steam_app_id} steamAppId={selectedSteamReviewGame.steam_app_id} gameTitle={selectedSteamReviewGame.title}/></> : <div className="empty-state">Sync a Steam game into your library to browse its English community reviews. You can still write RetroVault reviews for any game.</div>}
+      <div className="review-feed-heading"><h2>RetroVault player reviews</h2><div className="review-feed-controls"><label>Game<select value={reviewGameFilter} onChange={(event) => setReviewGameFilter(event.target.value)}><option value="all">All games</option>{reviewGameOptions.map((game) => <option key={game.id} value={game.id}>{game.title}</option>)}</select></label><label>Sort<select value={reviewFeedSort} onChange={(event) => setReviewFeedSort(event.target.value)}><option value="recent">Newest</option><option value="rating">Highest rated</option></select></label><button className="button small" onClick={async () => { const response = await fetch('/api/reviews?limit=40'); if (response.ok) setReviews(await response.json()) }}>Refresh</button></div></div>
+      {visibleReviews.length ? <div className="review-feed">{visibleReviews.map((review) => <article className="review-card" key={review.id}><div className="review-game-cover"><GameCover title={review.game.title} cover={review.game.artwork_grid_url || review.game.cover_url} backdrop={review.game.artwork_hero_url || review.game.backdrop_url}/></div><div className="review-content"><div className="review-card-heading"><div><b>{review.game.title}</b><small>{review.author.username} · {new Date(review.updated_at).toLocaleDateString()}</small></div><strong>{review.rating ? `${review.rating}/10` : '—'}</strong></div><p>{review.review_text}</p><button className="button small" onClick={() => { const ownedGame = games.find((game) => game.catalog_id === review.catalog_id); ownedGame ? openDetails(ownedGame) : openCatalogDetails({ ...review.game, id: review.catalog_id }) }}>{review.is_mine ? 'Edit your review' : 'Game details'}</button></div></article>)}</div> : <div className="empty-state">No reviews match this filter. Open one of your games and be the first to share a review.</div>}
     </section>}
 
     {tab === 'Add Games' && <section className="vgui-window content-window add-games-window"><div className="add-games-heading"><div><small>CROSS-PLATFORM CATALOG // {catalogBrowseCategory.toUpperCase()}</small><h1>Add games from any era</h1><p>Search PC, PlayStation, Nintendo, Sega, handheld, and arcade releases. Pick a result to fill in its details, then choose the edition you own.</p></div><span className="catalog-count">{stats.total} IN YOUR VAULT</span></div>
       <div className="catalog-layout"><div className="catalog-search-panel"><label htmlFor="catalog-title">Search the game catalog</label><input id="catalog-title" autoComplete="off" role="combobox" aria-autocomplete="list" aria-expanded={visibleSuggestions.length > 0} aria-controls="catalog-suggestions" aria-activedescendant={visibleSuggestions[suggestionIndex] ? `catalog-option-${visibleSuggestions[suggestionIndex].id}` : undefined} value={form.title} onChange={(event) => searchCatalog(event.target.value)} onKeyDown={(event) => { if (event.key === 'ArrowDown' && visibleSuggestions.length) { event.preventDefault(); setSuggestionIndex((index) => (index + 1) % visibleSuggestions.length) } else if (event.key === 'ArrowUp' && visibleSuggestions.length) { event.preventDefault(); setSuggestionIndex((index) => (index - 1 + visibleSuggestions.length) % visibleSuggestions.length) } else if (event.key === 'Enter' && visibleSuggestions[suggestionIndex]) { event.preventDefault(); selectCatalogGame(visibleSuggestions[suggestionIndex]) } else if (event.key === 'Escape') { setSuggestions([]) } }} placeholder="Try Dead Space or Burnout Dominator…"/>
-        <div className="catalog-source-note">Catalog suggestions merge GameDB&apos;s IGDB-based index with your shared RetroVault catalog. Selecting a GameDB result loads its details and adds it to the shared catalog.{catalogProviderError && <span className="catalog-error"> A remote catalog could not be reached; showing the available results.</span>}</div>
+        <div className="catalog-source-note">Search RAWG&apos;s game database alongside GameDB and your RetroVault catalog. Selecting a RAWG or GameDB result loads its artwork, platforms, release details and ratings. Metadata supplied by <a href="https://rawg.io/" target="_blank" rel="noreferrer">RAWG</a>.{catalogProviderError && <span className="catalog-error"> A remote catalog could not be reached; showing the available results.</span>}</div>
         {suggestions.length > 0 && <div className="catalog-browse-filters"><label>Browse platforms<select value={catalogPlatformFilter} onChange={(event) => { setCatalogPlatformFilter(event.target.value); setSuggestionIndex(0) }}><option>All platforms</option>{catalogPlatforms.map((platform) => <option key={platform}>{platform}</option>)}</select></label><label>Genres<select value={catalogGenreFilter} onChange={(event) => { setCatalogGenreFilter(event.target.value); setSuggestionIndex(0) }}><option>All genres</option>{catalogGenres.map((genre) => <option key={genre}>{genre}</option>)}</select></label></div>}
         {catalogLoading && <div className="catalog-state" role="status">Searching across platforms…</div>}
         {!catalogLoading && form.title.trim().length >= 2 && suggestions.length === 0 && <div className="catalog-state">No matches found. You can still add it manually below.</div>}
-        {visibleSuggestions.length > 0 && <><div className="catalog-match-count">{visibleSuggestions.length} matches · use ↑ ↓ and Enter to select</div><div className="catalog-results" id="catalog-suggestions" role="listbox" aria-label="Game suggestions">{visibleSuggestions.map((game, index) => <button type="button" role="option" id={`catalog-option-${game.id}`} aria-selected={suggestionIndex === index} className={`catalog-result ${suggestionIndex === index ? 'active' : ''}`} key={game.id} onMouseEnter={() => setSuggestionIndex(index)} onClick={() => selectCatalogGame(game)}><span className="catalog-result-cover">{game.cover_url ? <img src={game.cover_url} alt="" loading="lazy"/> : game.title.slice(0, 1)}</span><span className="catalog-result-info"><b>{game.title}</b><small>{game.release_year || (game.gamedb_id ? 'GameDB · IGDB' : 'Year unknown')}{game.genres?.length ? ` · ${game.genres.slice(0, 2).join(', ')}` : ''}</small><span>{game.platforms?.length ? game.platforms.slice(0, 5).join(' · ') : game.gamedb_id ? 'Select to load platforms and artwork' : 'Platform details unavailable'}</span></span><span className="catalog-result-action">Select ›</span></button>)}</div></>}
+        {visibleSuggestions.length > 0 && <><div className="catalog-match-count">{visibleSuggestions.length} matches · use ↑ ↓ and Enter to select</div><div className="catalog-results" id="catalog-suggestions" role="listbox" aria-label="Game suggestions">{visibleSuggestions.map((game, index) => <button type="button" role="option" id={`catalog-option-${game.id}`} aria-selected={suggestionIndex === index} className={`catalog-result ${suggestionIndex === index ? 'active' : ''}`} key={game.id} onMouseEnter={() => setSuggestionIndex(index)} onClick={() => selectCatalogGame(game)}><span className="catalog-result-cover">{game.cover_url ? <img src={game.cover_url} alt="" loading="lazy"/> : game.title.slice(0, 1)}</span><span className="catalog-result-info"><b>{game.title}</b><small>{game.release_year || (game.rawg_id ? 'RAWG' : game.gamedb_id ? 'GameDB · IGDB' : 'Year unknown')}{game.genres?.length ? ` · ${game.genres.slice(0, 2).join(', ')}` : ''}</small><span>{game.platforms?.length ? game.platforms.slice(0, 5).join(' · ') : game.rawg_id || game.gamedb_id ? 'Select to load platforms and artwork' : 'Platform details unavailable'}{game.rawg_rating ? ` · RAWG ${Number(game.rawg_rating).toFixed(1)}/5` : ''}</span></span><span className="catalog-result-action">Select ›</span></button>)}</div></>}
         {suggestions.length > 0 && visibleSuggestions.length === 0 && <div className="catalog-state">No matches for these platform and genre filters.</div>}
       </div>
       <form onSubmit={addGame} className="add-form catalog-form"><div className="panel-title"><small>{form.catalog_id ? 'CATALOG MATCH SELECTED' : 'MANUAL OR CATALOG ENTRY'}</small><h2>{selectedCatalogGame?.title || 'Game details'}</h2></div>
@@ -522,7 +544,7 @@ function App() {
         <label>Notes<textarea rows="3" value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))}/></label>
         <button className="button primary" type="submit">Add to my vault</button>
       </form></div>
-      <p className="catalog-attribution">Game metadata comes from <a href="https://github.com/LizardByte/GameDB" target="_blank" rel="noreferrer">LizardByte GameDB</a> and <a href="https://www.igdb.com/" target="_blank" rel="noreferrer">IGDB</a>. Missing releases can still be added manually.</p>
+      <p className="catalog-attribution">Game metadata comes from <a href="https://rawg.io/" target="_blank" rel="noreferrer">RAWG</a>, <a href="https://github.com/LizardByte/GameDB" target="_blank" rel="noreferrer">LizardByte GameDB</a> and <a href="https://www.igdb.com/" target="_blank" rel="noreferrer">IGDB</a>. Missing releases can still be added manually.</p>
     </section>}
 
     {tab === 'Activity' && <section className="vgui-window content-window"><div className="section-heading"><div><small>SYNCED DELTAS</small><h1>Playtime Activity</h1></div><span>{logs.length} events</span></div>{logs.length ? <div className="activity-list">{logs.map((log) => <article key={log.id}><span className="activity-dot"/><img src={log.catalog?.cover_url || ''} alt=""/><div><b>{log.catalog?.title || 'Unknown game'}</b><small>{new Date(log.happened_at).toLocaleString()} · {log.source}</small></div><strong>+{prettyTime(log.delta_minutes)}</strong></article>)}</div> : <div className="empty-state">Your activity appears after Steam reports new playtime during a sync.</div>}</section>}
@@ -535,11 +557,53 @@ function App() {
     {selectedGame && <GameDetailsDialog key={`${selectedGame.catalog_only ? 'catalog' : 'user'}-${selectedGame.id}`} game={selectedGame} details={gameDetails} reviews={reviews.filter((review) => review.catalog_id === selectedGame.catalog_id)} loading={detailsLoading} error={detailsError} onClose={() => setSelectedGame(null)} onSaveReview={saveReview} onAddToBacklog={addRecommendationToBacklog}/>}
       </div>
     </div>
-    <footer className="statusbar"><span className={supabaseOnline ? '' : 'offline'}><i/> SUPABASE {supabaseOnline ? 'ONLINE' : 'OFFLINE'}</span><span>{games.length} TITLES · {prettyTime(stats.playtime)} TRACKED</span><span>GAME DATA: GAMEDB + STEAM</span><span>STEAM ID {user.id}</span></footer>
+    <footer className="statusbar"><span className={supabaseOnline ? '' : 'offline'}><i/> SUPABASE {supabaseOnline ? 'ONLINE' : 'OFFLINE'}</span><span>{games.length} TITLES · {prettyTime(stats.playtime)} TRACKED</span><span>GAME DATA: RAWG + GAMEDB + STEAM</span><span>STEAM ID {user.id}</span></footer>
   </main>
 }
 
 export default App
+
+function SteamReviewsPanel({ steamAppId, gameTitle }) {
+  const [sort, setSort] = useState('helpful')
+  const [sentiment, setSentiment] = useState('all')
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [refresh, setRefresh] = useState(0)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    const params = new URLSearchParams({ sort, sentiment })
+    fetch(`/api/steam/reviews/${steamAppId}?${params}`, { signal: controller.signal })
+      .then(async (response) => {
+        const result = await readJsonResponse(response)
+        if (!response.ok) throw new Error(result.message || 'Steam reviews are unavailable right now.')
+        setData(result)
+      })
+      .catch((reason) => { if (reason.name !== 'AbortError') setError(reason.message) })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    return () => controller.abort()
+  }, [steamAppId, sort, sentiment, refresh])
+
+  const reviews = data?.reviews || []
+  const reviewsUrl = `https://store.steampowered.com/app/${steamAppId}/`
+  return <section className="steam-reviews-panel">
+    <div className="review-feed-heading steam-review-heading"><div><h2>Steam community reviews</h2><small>English · {Number(data?.total_reviews || 0).toLocaleString()} matching reviews</small></div><a href={reviewsUrl} target="_blank" rel="noreferrer">{gameTitle} on Steam ↗</a></div>
+    <div className="steam-review-toolbar">
+      <label>Order<select value={sort} onChange={(event) => { setLoading(true); setError(''); setSort(event.target.value) }}><option value="helpful">Most helpful</option><option value="recent">Newest</option><option value="updated">Recently updated</option></select></label>
+      <label>Sentiment<select value={sentiment} onChange={(event) => { setLoading(true); setError(''); setSentiment(event.target.value) }}><option value="all">All reviews</option><option value="positive">Positive</option><option value="negative">Negative</option></select></label>
+      <button className="button small" disabled={loading} onClick={() => { setLoading(true); setError(''); setRefresh((current) => current + 1) }}>Refresh</button>
+      <span>Sorted by Steam helpfulness votes</span>
+    </div>
+    {loading && <div className="steam-review-state" role="status">Loading English Steam reviews…</div>}
+    {error && <div className="steam-review-state review-error" role="alert">{error}</div>}
+    {!loading && !error && reviews.length > 0 && <div className="steam-review-list">{reviews.map((review) => <article className="steam-review-card" key={review.review_id}>
+      <div className="steam-review-meta"><strong className={review.recommended ? 'positive' : 'negative'}>{review.recommended ? 'Recommended' : 'Not recommended'}</strong><span>{review.author}{review.created_at ? ` · ${new Date(review.created_at).toLocaleDateString()}` : ''}</span><span>{prettyTime(review.playtime_minutes)} played</span><span>{Number(review.helpful).toLocaleString()} found helpful</span></div>
+      <p>{review.text}</p>
+    </article>)}</div>}
+    {!loading && !error && reviews.length === 0 && <div className="steam-review-state">No English reviews found for this filter.</div>}
+  </section>
+}
 
 function GameDetailsDialog({ game, details, reviews = [], loading, error, onClose, onSaveReview, onAddToBacklog }) {
   const data = details || game
@@ -556,14 +620,15 @@ function GameDetailsDialog({ game, details, reviews = [], loading, error, onClos
       <div className="details-main"><div className="details-cover"><GameCover title={data.title} cover={data.artwork_grid_url || data.cover_url || data.cover_image} backdrop={data.artwork_hero_url || data.backdrop_url}/>{data.artwork_logo_url && <img className="details-logo" src={data.artwork_logo_url} alt={`${data.title} logo`}/>}</div><div className="details-copy">
         {loading && <div className="detail-loading"><i/> Fetching store info and artwork…</div>}
         {error && <p className="detail-error">{error}</p>}
-        <div className="detail-chips"><span>{data.release_year || data.year || 'Release year unknown'}</span><span>{data.platform_played || data.platform || data.platforms?.[0] || 'Multiple platforms'}</span><span>{data.status || 'In catalog'}</span>{data.metacritic_score != null && <a className="metacritic-score" href={data.metacritic_url || '#'} target="_blank" rel="noreferrer"><b>{data.metacritic_score}</b><small>METACRITIC</small></a>}{data.rating_count > 0 && <span>RetroVault community {(Number(data.rating_avg || 0) / 2).toFixed(1)}/5 · {data.rating_count.toLocaleString()} ratings</span>}</div>
+        <div className="detail-chips"><span>{data.release_year || data.year || 'Release year unknown'}</span><span>{data.platform_played || data.platform || data.platforms?.[0] || 'Multiple platforms'}</span><span>{data.status || 'In catalog'}</span>{data.metacritic_score != null && <a className="metacritic-score" href={data.metacritic_url || '#'} target="_blank" rel="noreferrer"><b>{data.metacritic_score}</b><small>METACRITIC</small></a>}{data.rawg_rating > 0 && <span>RAWG {Number(data.rawg_rating).toFixed(2)}/5 · {Number(data.rawg_rating_count || 0).toLocaleString()} ratings</span>}{data.rating_count > 0 && <span>RetroVault community {(Number(data.rating_avg || 0) / 2).toFixed(1)}/5 · {data.rating_count.toLocaleString()} ratings</span>}</div>
         <div className="detail-facts">{data.developer && <p><b>Developer</b><span>{data.developer}</span></p>}{data.publisher && <p><b>Publisher</b><span>{data.publisher}</span></p>}{data.genres?.length > 0 && <p><b>Genres</b><span>{data.genres.join(' · ')}</span></p>}{data.playtime_minutes > 0 && <p><b>Playtime</b><span>{prettyTime(data.playtime_minutes)}</span></p>}</div>
         <p className="detail-summary">{data.summary || 'No description is available yet.'}</p>
-        <div className="detail-links">{steamUrl && <><a className="button primary" href={steamUrl} target="_blank" rel="noreferrer">Steam Store ↗</a><a className="button" href={`steam://run/${data.steam_app_id}`}>Play ↗</a></>}{<a className="button" href={gridUrl} target="_blank" rel="noreferrer">More artwork ↗</a>}</div>
+        <div className="detail-links">{steamUrl && <><a className="button primary" href={steamUrl} target="_blank" rel="noreferrer">Steam Store ↗</a><a className="button" href={`steam://run/${data.steam_app_id}`}>Play ↗</a></>}{data.rawg_id && data.slug && <a className="button" href={`https://rawg.io/games/${encodeURIComponent(data.slug)}`} target="_blank" rel="noreferrer">RAWG ↗</a>}<a className="button" href={gridUrl} target="_blank" rel="noreferrer">More artwork ↗</a></div>
       </div></div>
       {!game.catalog_only && <form className="review-editor" onSubmit={async (event) => { event.preventDefault(); setSavingReview(true); try { await onSaveReview(game, reviewRating ? Number(reviewRating) : null, reviewText.trim()) } finally { setSavingReview(false) } }}><div><small>YOUR REVIEW</small><h3>Share your take</h3></div><label>Rating<select value={reviewRating} onChange={(event) => setReviewRating(event.target.value)}><option value="">No rating</option>{Array.from({ length: 10 }, (_, index) => 10 - index).map((rating) => <option value={rating} key={rating}>{rating}/10</option>)}</select></label><label>Review<textarea rows="4" maxLength="5000" value={reviewText} onChange={(event) => setReviewText(event.target.value)} placeholder="What did you think of this game?"/><small>{reviewText.length}/5000 · public when your RetroVault profile is public</small></label><button className="button primary" disabled={savingReview}>{savingReview ? 'Saving…' : 'Save review'}</button></form>}
       {game.catalog_only && <div className="discovery-modal-action"><p>Add this game to your library and keep it in Backlog?</p><button className="button primary" onClick={() => onAddToBacklog(game)}>＋ Add to backlog</button></div>}
-      {(reviews.length > 0 || data.community_reviews?.length > 0) && <section className="details-community-reviews"><div className="review-feed-heading"><h3>Player reviews</h3><span>{reviews.length + (data.community_reviews?.length || 0)} reviews</span></div>{data.community_reviews?.map((review, index) => <article className="external-review" key={`steam-${index}`}><div><b>{review.source} · {review.recommended ? 'Recommended' : 'Not recommended'}</b><small>{review.author}{review.created_at ? ` · ${new Date(review.created_at).toLocaleDateString()}` : ''}</small></div><p>{review.text}</p></article>)}{reviews.map((review) => <article className="external-review" key={review.id}><div className="community-review-author">{review.author.avatar_url && <img src={review.author.avatar_url} alt=""/>}<span><b>{review.author.username}{review.is_mine ? ' · You' : ''}</b><small>{review.rating ? `${review.rating}/10` : 'No rating'} · {new Date(review.updated_at).toLocaleDateString()}</small></span></div><p>{review.review_text}</p></article>)}</section>}
+      {data.steam_app_id && <SteamReviewsPanel steamAppId={data.steam_app_id} gameTitle={data.title}/>}
+      {reviews.length > 0 && <section className="details-community-reviews"><div className="review-feed-heading"><h3>RetroVault player reviews</h3><span>{reviews.length} reviews</span></div>{reviews.map((review) => <article className="external-review" key={review.id}><div className="community-review-author">{review.author.avatar_url && <img src={review.author.avatar_url} alt=""/>}<span><b>{review.author.username}{review.is_mine ? ' · You' : ''}</b><small>{review.rating ? `${review.rating}/10` : 'No rating'} · {new Date(review.updated_at).toLocaleDateString()}</small></span></div><p>{review.review_text}</p></article>)}</section>}
       {screenshots.length > 0 && <div className="details-screenshots"><div><small>SCREENSHOTS</small><span>{screenshots.length} images</span></div><div className="screenshot-strip">{screenshots.map((image, index) => <a key={image} href={image} target="_blank" rel="noreferrer"><img src={image} loading="lazy" alt={`${data.title} screenshot ${index + 1}`}/></a>)}</div></div>}
     </section>
   </div>
@@ -581,5 +646,5 @@ function PublicProfile({ steamId, message }) {
   if (error || message) return <main className="login-screen"><section className="vgui-window content-window"><h1>Profile unavailable</h1><p>{error || message}</p><a href="/">Return to RetroVault</a></section></main>
   if (!data) return <main className="boot-screen">LOADING PUBLIC PROFILE…</main>
   const { profile, games, stats } = data
-  return <main className="app-shell"><header className="vgui-window top-window"><div className="titlebar"><div><strong>RetroVault // Public Profile</strong><small>Player collection and stats</small></div><a className="button" href="/">Open RetroVault</a></div></header><section className="vgui-window content-window public-owner">{profile.avatar_url && <img src={profile.avatar_url} alt=""/>}<div><small>STEAM PROFILE</small><h1>{profile.username}</h1>{profile.profile_url && <a href={profile.profile_url} target="_blank" rel="noreferrer">View Steam profile ↗</a>}</div></section><section className="stats-grid">{[['IN VAULT', stats.total], ['COMPLETED', `${stats.completed} (${stats.completionRate}%)`], ['PLAYTIME', prettyTime(stats.playtimeMinutes)], ['MEMBER SINCE', profile.steam_created_at ? new Date(profile.steam_created_at).getFullYear() : 'Steam']].map(([label, value]) => <div className="vgui-window stat" key={label}><small>{label}</small><strong>{value}</strong></div>)}</section><section className="vgui-window content-window"><div className="section-heading"><div><small>SHARED COLLECTION</small><h1>Games</h1></div><span>{games.length} titles</span></div><div className="game-grid public-game-grid">{games.map((game) => <article className="game-card" key={game.id}><div className="poster"><GameCover title={game.title} cover={game.cover_image} backdrop={game.backdrop_url}/></div><div className="game-info"><div className="game-title"><b>{game.title}</b><span>{game.year || '—'} · {game.platform}</span></div><span>{game.status} · {prettyTime(game.playtime_minutes)}</span>{game.rating && <span>Rating: {game.rating}/10</span>}</div></article>)}</div></section><footer className="statusbar"><span>RETROVAULT PUBLIC PROFILE</span><span>GAME DATA: GAMEDB + STEAM</span><span>STEAM ID {steamId}</span></footer></main>
+  return <main className="app-shell"><header className="vgui-window top-window"><div className="titlebar"><div><strong>RetroVault // Public Profile</strong><small>Player collection and stats</small></div><a className="button" href="/">Open RetroVault</a></div></header><section className="vgui-window content-window public-owner">{profile.avatar_url && <img src={profile.avatar_url} alt=""/>}<div><small>STEAM PROFILE</small><h1>{profile.username}</h1>{profile.profile_url && <a href={profile.profile_url} target="_blank" rel="noreferrer">View Steam profile ↗</a>}</div></section><section className="stats-grid">{[['IN VAULT', stats.total], ['COMPLETED', `${stats.completed} (${stats.completionRate}%)`], ['PLAYTIME', prettyTime(stats.playtimeMinutes)], ['MEMBER SINCE', profile.steam_created_at ? new Date(profile.steam_created_at).getFullYear() : 'Steam']].map(([label, value]) => <div className="vgui-window stat" key={label}><small>{label}</small><strong>{value}</strong></div>)}</section><section className="vgui-window content-window"><div className="section-heading"><div><small>SHARED COLLECTION</small><h1>Games</h1></div><span>{games.length} titles</span></div><div className="game-grid public-game-grid">{games.map((game) => <article className="game-card" key={game.id}><div className="poster"><GameCover title={game.title} cover={game.cover_image} backdrop={game.backdrop_url}/></div><div className="game-info"><div className="game-title"><b>{game.title}</b><span>{game.year || '—'} · {game.platform}</span></div><span>{game.status} · {prettyTime(game.playtime_minutes)}</span>{game.rating && <span>Rating: {game.rating}/10</span>}</div></article>)}</div></section><footer className="statusbar"><span>RETROVAULT PUBLIC PROFILE</span><span>GAME DATA: RAWG + GAMEDB + STEAM</span><span>STEAM ID {steamId}</span></footer></main>
 }

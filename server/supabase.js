@@ -44,12 +44,13 @@ const toGame = (row) => {
     multiplayer: catalog.multiplayer || false,
     co_op: catalog.co_op || false,
     rawg_id: catalog.rawg_id,
+    metadata_provider: catalog.metadata_provider || 'manual',
     rating_avg: catalog.rating_avg || 0,
     rating_count: catalog.rating_count || 0,
   }
 }
 
-const catalogRelation = 'catalog:games_catalog(id,title,platforms,release_year,genres,cover_url,backdrop_url,artwork_grid_url,artwork_hero_url,artwork_logo_url,metacritic_score,metacritic_url,screenshots,summary,developer,publisher,steam_app_id,rawg_id,rating_avg,rating_count,time_to_beat_hours,multiplayer,co_op)'
+const catalogRelation = 'catalog:games_catalog(id,title,slug,platforms,release_year,genres,cover_url,backdrop_url,artwork_grid_url,artwork_hero_url,artwork_logo_url,metacritic_score,metacritic_url,screenshots,summary,developer,publisher,steam_app_id,rawg_id,metadata_provider,rating_avg,rating_count,time_to_beat_hours,multiplayer,co_op)'
 
 export const getCatalogGameForUser = async (userId, userGameId) => {
   if (!supabase) throw new Error('Supabase server configuration is missing')
@@ -71,8 +72,8 @@ export const updateCatalogDetails = async (catalogId, changes) => {
   const allowedFields = [
     'metacritic_score', 'metacritic_url', 'screenshots', 'artwork_grid_url',
     'artwork_hero_url', 'artwork_logo_url', 'details_updated_at', 'summary',
-    'developer', 'publisher', 'release_year', 'genres', 'backdrop_url', 'cover_url',
-    'rawg_id', 'rating_avg', 'rating_count',
+    'developer', 'publisher', 'release_year', 'genres', 'platforms', 'backdrop_url', 'cover_url',
+    'rawg_id', 'slug', 'metadata_provider', 'metadata_updated_at', 'rating_avg', 'rating_count',
   ]
   const update = Object.fromEntries(Object.entries(changes).filter(([key, value]) => allowedFields.includes(key) && value !== undefined))
   if (!Object.keys(update).length) return null
