@@ -4,6 +4,8 @@ RetroVault is a game collection, discovery, and playtime tracker for Steam, GOG,
 
 ## Features
 
+The RetroVault brand uses the supplied pixel-art vault logo in [`public/retrovault-logo.png`](public/retrovault-logo.png). The original transparent PNG is used in the header/Home link, Home dashboard, sign-in screen, profile avatar fallback, and browser icon. Its artwork and colors are preserved across all themes.
+
 - **Steam sign-in:** Steam OpenID 2.0 is verified server-side. The backend issues a 30-day HMAC-signed, `HttpOnly`, `SameSite=Lax` session cookie; production cookies use `Secure`.
 - **Steam library sync:** imports owned games, app IDs, total playtime and last-played times. Re-syncing preserves the player's status, rating, notes and favorites. A sync records increases in Steam playtime as activity deltas.
 - **Cross-platform game discovery:** browse GameDB/IGDB platform and genre recommendations, combined with the RetroVault catalog. The **Add Games** search merges RetroVault, GameDB and RAWG results when `RAWG_API_KEY` is configured.

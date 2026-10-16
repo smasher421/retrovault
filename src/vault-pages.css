@@ -1,5 +1,7 @@
 /* These pages inherit every surface and accent from the selected VGUI skin. */
-.brand-home { padding:0; border:0; background:none; text-align:left; cursor:pointer; }
+.brand-home { padding:0; border:0; background:none; color:inherit; text-decoration:none; text-align:left; cursor:pointer; }
+.brand-lockup.brand-home>img { display:block; flex:none; width:136px; height:136px; margin-block:-17px; object-fit:contain; image-rendering:auto; filter:none; }
+.login-content .login-logo { display:block; width:min(300px,100%); height:auto; margin:-28px auto -16px; object-fit:contain; image-rendering:auto; filter:none; }
 .brand-home:hover strong,.brand-home:focus-visible strong { color:var(--custom-accent); }
 .brand-home:focus-visible,.theme-card:focus-visible,.home-game:focus-visible { outline:2px solid var(--custom-accent); outline-offset:4px; }
 .account-profile-button { display:grid; gap:4px; padding:4px 0; background:none; border:0; text-align:left; }
@@ -7,7 +9,7 @@
 .dashboard-page { display:grid; gap:18px; }
 .home-hero { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:32px; background:radial-gradient(ellipse at right top,color-mix(in srgb,var(--custom-accent) 14%,transparent),transparent 65%),var(--custom-panel); }
 .home-hero>div { min-width:0; }
-.home-hero>img { width:140px; height:140px; image-rendering:pixelated; }
+.home-hero>img { width:clamp(180px,25vw,280px); height:auto; max-width:40%; flex:none; margin-block:-24px; object-fit:contain; image-rendering:auto; }
 .home-hero h1 { margin:12px 0; font-size:clamp(24px,3vw,36px); letter-spacing:-.04em; line-height:1.2; overflow-wrap:anywhere; }
 .home-hero p { max-width:530px; margin:0 0 22px; color:var(--muted); line-height:1.7; }
 .home-hero small,.profile-hero>div>small,.dashboard-section .section-heading small { color:var(--custom-accent); font:10px Consolas,monospace; letter-spacing:.09em; }
@@ -110,8 +112,13 @@
   .profile-hero>.button { margin-left:120px; }
 }
 @media(max-width:650px) {
-  .home-hero { padding:20px; }
-  .home-hero>img { display:none; }
+  .top-window .titlebar { flex-wrap:wrap; align-items:center; gap:12px; }
+  .top-window .account-chip { margin-left:auto; }
+  .home-hero { padding:20px; flex-direction:column-reverse; align-items:flex-start; gap:8px; }
+  .home-hero>img { display:block; width:180px; max-width:70%; align-self:center; margin:-20px 0 -12px; }
+  .brand-lockup.brand-home>img { width:96px; height:96px; margin-block:-12px; }
+  .brand-lockup.brand-home { gap:6px; }
+  .brand-lockup.brand-home strong { font-size:14px; }
   .home-shortcuts,.profile-reviews { grid-template-columns:1fr; }
   .profile-page .stats-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .dashboard-section { padding:16px; }
