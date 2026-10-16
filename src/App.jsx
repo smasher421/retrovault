@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 const STATUSES = ['Backlog', 'Playing', 'Completed', '100% Completed', 'Abandoned']
 const PAGE_SIZE = 24
@@ -629,9 +630,56 @@ function GameDetailsDialog({ game, details, reviews = [], loading, error, onClos
       {game.catalog_only && <div className="discovery-modal-action"><p>Add this game to your library and keep it in Backlog?</p><button className="button primary" onClick={() => onAddToBacklog(game)}>＋ Add to backlog</button></div>}
       {data.steam_app_id && <SteamReviewsPanel steamAppId={data.steam_app_id} gameTitle={data.title}/>}
       {reviews.length > 0 && <section className="details-community-reviews"><div className="review-feed-heading"><h3>RetroVault player reviews</h3><span>{reviews.length} reviews</span></div>{reviews.map((review) => <article className="external-review" key={review.id}><div className="community-review-author">{review.author.avatar_url && <img src={review.author.avatar_url} alt=""/>}<span><b>{review.author.username}{review.is_mine ? ' · You' : ''}</b><small>{review.rating ? `${review.rating}/10` : 'No rating'} · {new Date(review.updated_at).toLocaleDateString()}</small></span></div><p>{review.review_text}</p></article>)}</section>}
-      {screenshots.length > 0 && <div className="details-screenshots"><div><small>SCREENSHOTS</small><span>{screenshots.length} images</span></div><div className="screenshot-strip">{screenshots.map((image, index) => <a key={image} href={image} target="_blank" rel="noreferrer"><img src={image} loading="lazy" alt={`${data.title} screenshot ${index + 1}`}/></a>)}</div></div>}
+      {screenshots.length > 0 && <ScreenshotGallery images={screenshots} title={data.title}/>}
     </section>
   </div>
+}
+
+function ScreenshotGallery({ images, title }) {
+  const [activeIndex, setActiveIndex] = useState(null)
+  const closeButtonRef = useRef(null)
+  const openerRef = useRef(null)
+  const isOpen = activeIndex !== null
+  const showImage = (index, event) => {
+    openerRef.current = event.currentTarget
+    setActiveIndex(index)
+  }
+  const close = useCallback(() => setActiveIndex(null), [])
+  const move = useCallback((direction) => setActiveIndex((current) => (current + direction + images.length) % images.length), [images.length])
+
+  useEffect(() => {
+    if (!isOpen) return undefined
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    closeButtonRef.current?.focus()
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); close() }
+      else if (event.key === 'ArrowLeft' && images.length > 1) { event.preventDefault(); move(-1) }
+      else if (event.key === 'ArrowRight' && images.length > 1) { event.preventDefault(); move(1) }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      document.body.style.overflow = previousOverflow
+      openerRef.current?.focus()
+    }
+  }, [isOpen, close, images.length, move])
+
+  return <>
+    <div className="details-screenshots"><div><small>SCREENSHOTS</small><span>{images.length} images · click to preview</span></div><div className="screenshot-strip">{images.map((image, index) => <button className="screenshot-thumbnail" type="button" key={image} onClick={(event) => showImage(index, event)} aria-label={`Preview ${title} screenshot ${index + 1}`}><img src={image} loading="lazy" alt={`${title} screenshot ${index + 1}`}/></button>)}</div></div>
+    {isOpen && createPortal(<div className="screenshot-viewer" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close() }}>
+      <section className="screenshot-viewer-dialog" role="dialog" aria-modal="true" aria-label={`${title} screenshots`}>
+        <header className="screenshot-viewer-header"><div><small>{title} // SCREENSHOTS</small><strong aria-live="polite">{activeIndex + 1} / {images.length}</strong></div><button className="screenshot-viewer-close" type="button" onClick={close} ref={closeButtonRef} aria-label="Close image preview">×</button></header>
+        <div className="screenshot-viewer-stage">
+          {images.length > 1 && <button className="screenshot-viewer-nav previous" type="button" onClick={() => move(-1)} aria-label="Previous screenshot">‹</button>}
+          <img className="screenshot-viewer-image" src={images[activeIndex]} alt={`${title} screenshot ${activeIndex + 1}`} fetchPriority="high"/>
+          {images.length > 1 && <button className="screenshot-viewer-nav next" type="button" onClick={() => move(1)} aria-label="Next screenshot">›</button>}
+        </div>
+        <div className="screenshot-viewer-hint">Use ← and → to browse · Esc to close</div>
+        {images.length > 1 && <div className="screenshot-viewer-thumbnails" aria-label="Choose screenshot">{images.map((image, index) => <button type="button" key={image} className={`screenshot-viewer-thumb ${index === activeIndex ? 'active' : ''}`} aria-current={index === activeIndex ? 'true' : undefined} aria-label={`Show screenshot ${index + 1}`} onClick={() => setActiveIndex(index)}><img src={image} loading="lazy" alt=""/></button>)}</div>}
+      </section>
+    </div>, document.body)}
+  </>
 }
 
 function PublicProfile({ steamId, message }) {
