@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { THEMES, THEME_VARIABLES } from '../shared/themes.js'
+import { HomePage, ProfilePage, ThemePicker } from './components/VaultPages.jsx'
+import GogStore from './components/GogStore.jsx'
+import StorePrice from './components/StorePrice.jsx'
+import useGogAccount from './useGogAccount.js'
 
 const STATUSES = ['Backlog', 'Playing', 'Completed', '100% Completed', 'Abandoned']
 const PAGE_SIZE = 24
@@ -20,7 +25,7 @@ const PLATFORM_GROUPS = [
 const GAME_STORES = [
   { name: 'Steam', mark: 'S', description: 'Live top sellers, most played, new releases, and deals.', url: 'https://store.steampowered.com/', internal: true },
   { name: 'Epic Games Store', mark: 'E', description: 'PC releases, weekly free games, and seasonal sales.', url: 'https://store.epicgames.com/' },
-  { name: 'GOG.com', mark: 'G', description: 'PC games, classics, and DRM-free releases.', url: 'https://www.gog.com/' },
+  { name: 'GOG.com', mark: 'G', description: 'Classics, DRM-free releases, live deals, and library sync.', url: 'https://www.gog.com/', internal: true },
   { name: 'PlayStation Store', mark: 'PS', description: 'Digital games and add-ons for PlayStation consoles.', url: 'https://store.playstation.com/' },
   { name: 'Xbox Store', mark: 'X', description: 'Xbox and Windows PC games from Microsoft.', url: 'https://www.xbox.com/games/store' },
   { name: 'Nintendo eShop', mark: 'N', description: 'Digital games for Nintendo Switch consoles.', url: 'https://www.nintendo.com/us/store/' },
@@ -31,13 +36,8 @@ const STEAM_STORE_CATEGORIES = [
   ['top_sellers', 'Top sellers'], ['most_played', 'Most played'], ['new_releases', 'New releases'], ['specials', 'Specials'],
 ]
 const DISCOVERY_GENRES = ['Action', 'Adventure', 'RPG', 'Shooter', 'Strategy', 'Puzzle', 'Racing', 'Sports', 'Simulation', 'Platformer', 'Fighting', 'Horror', 'Indie']
-const THEMES = [
-  ['vgui-olive', 'VGUI Olive'], ['source-obsidian', 'Source Obsidian'],
-  ['hev-hazard', 'HEV Hazard'], ['lan-party-98', 'LAN Party 98'],
-]
 const DEFAULT_FORM = { title: '', platform: 'PC', genre: '', year: '', status: 'Backlog', notes: '', cover_image: '' }
 const prettyTime = (minutes = 0) => `${Math.floor(minutes / 60).toLocaleString()}h ${minutes % 60}m`
-const formatStorePrice = (amount, currency = 'RON') => amount == null ? 'Price unavailable' : amount === 0 ? 'Free' : new Intl.NumberFormat('ro-RO', { style: 'currency', currency }).format(amount / 100)
 const readJsonResponse = async (response) => {
   if (response.headers.get('content-type')?.includes('application/json')) return response.json()
   await response.text()
@@ -238,6 +238,10 @@ function PageControls({ page, pageCount, total, onChange }) {
   return <div className="pagination"><span>Showing {start}–{end} of {total}</span><div><button className="button" disabled={page === 1} onClick={() => onChange(page - 1)}>‹ Previous</button><strong>Page {page} / {pageCount}</strong><button className="button" disabled={page === pageCount} onClick={() => onChange(page + 1)}>Next ›</button></div></div>
 }
 
+function VaultCover({ game }) {
+  return <GameCover title={game.title} cover={game.cover_image || game.cover_url} backdrop={game.backdrop_url}/>
+}
+
 function App() {
   const publicSteamId = window.location.pathname.match(/^\/u\/(\d{17})\/?$/)?.[1]
   const [user, setUser] = useState(null)
@@ -262,7 +266,7 @@ function App() {
   const [steamStoreError, setSteamStoreError] = useState('')
   const [steamStoreRefresh, setSteamStoreRefresh] = useState(0)
   const [steamStoreActionId, setSteamStoreActionId] = useState(null)
-  const [tab, setTab] = useState('Library')
+  const [tab, setTab] = useState('Home')
   const [collectionView, setCollectionView] = useState('My Library')
   const [view, setView] = useState('grid')
   const [query, setQuery] = useState('')
@@ -298,6 +302,8 @@ function App() {
     if (activityResponse.ok) setLogs(await activityResponse.json())
     if (reviewResponse.ok) setReviews(await reviewResponse.json())
   }, [])
+
+  const gogState = useGogAccount(user?.id, load)
 
   useEffect(() => {
     let active = true
@@ -343,6 +349,8 @@ function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = profile?.preferred_theme || 'vgui-olive'
+    const theme = THEMES.find((item) => item.id === profile?.preferred_theme) || THEMES[0]
+    THEME_VARIABLES.forEach((variable, index) => document.documentElement.style.setProperty(variable, theme.colors[index]))
     const custom = profile?.custom_theme || {}
     for (const [key, cssVar] of Object.entries({ background: '--custom-bg', panel: '--custom-panel', accent: '--custom-accent', text: '--custom-text' })) {
       if (typeof custom[key] === 'string' && /^#[0-9a-f]{6}$/i.test(custom[key])) document.documentElement.style.setProperty(cssVar, custom[key])
@@ -487,8 +495,9 @@ function App() {
   }
   const saveProfile = async (changes) => {
     const response = await fetch('/api/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes) })
-    if (!response.ok) return notifyError(response)
-    setProfile(await response.json()); setMessage('Profile settings saved.')
+    const result = await readJsonResponse(response)
+    if (!response.ok) { setMessage(result.message || 'Could not save profile.'); throw new Error(result.message || 'Could not save profile.') }
+    setProfile(result); setMessage('Profile settings saved.')
   }
   const findMatches = async (event) => {
     event.preventDefault()
@@ -578,12 +587,17 @@ function App() {
         : collectionView === 'Top' ? 'Top Rated in Your Vault'
           : collectionView === 'Home' ? 'Home' : 'My Library'
   const chooseCategory = (category) => {
+    window.scrollTo({ top: 0, behavior: 'instant' })
     setPage(1)
     setQuery('')
     setStatus('All statuses')
     if (category === 'Reviews') setTab('Reviews')
     else if (category === 'Achievements') setTab('Achievements')
-    else if (['Home', 'My Library', 'Wishlist'].includes(category)) {
+    else if (category === 'Home') setTab('Home')
+    else if (category === 'My Profile' || category === steamDisplayName) setTab('Profile')
+    else if (category === 'Settings') setTab('Settings')
+    else if (category === 'GOG Store') setTab('GOG Store')
+    else if (['My Library', 'Wishlist'].includes(category)) {
       setTab('Library')
       setCollectionView(category)
     } else if (category === 'Recent releases') {
@@ -594,7 +608,6 @@ function App() {
       setCollectionView('Top')
     } else if (category === 'Activity') setTab('Activity')
     else if (category === 'People you follow') setTab('Social')
-    else if (category === steamDisplayName) setTab('Settings')
     else if (category === 'Platforms') {
       setTab('Platforms')
       setCatalogBrowseCategory('Platforms')
@@ -608,6 +621,7 @@ function App() {
       setCatalogBrowseCategory('Steam Store')
       setSteamStoreLoading(true)
       setSteamStoreError('')
+      setSteamStoreRefresh((current) => current + 1)
     } else if (category === 'Backlog Picks' || ['All Games', 'Browse', 'Collections'].includes(category) || CONSOLE_PLATFORMS.includes(category) || DISCOVERY_GENRES.includes(category)) {
       setTab('Discover')
       setDiscoveryLoading(true)
@@ -628,26 +642,31 @@ function App() {
   if (!user) return <main className="login-screen"><section className="vgui-window login-window"><header className="titlebar"><b>RetroVault 2.0</b><span>Steam Library System</span></header><div className="login-content"><img className="login-logo" src="/retrovault-logo.svg" alt="RetroVault vault emblem"/><h1>Your games. Your story.</h1><p>Sign in with Steam to sync your library, track playtime, and build your personal vault.</p><a className="button primary" href="/auth/steam">Sign in through Steam</a><small>Steam game details must be public for library sync.</small></div></section></main>
 
   return <main className="app-shell">
-    <header className="vgui-window top-window"><div className="titlebar"><div className="brand-lockup"><img src="/retrovault-logo.svg" alt=""/><span><strong>RetroVault</strong><small>PERSONAL GAME VAULT // STEAM CONNECTED</small></span></div><div className="account-chip">{profile?.avatar_url && <img src={profile.avatar_url} alt="" />}<span>{steamDisplayName}</span><button className="button small" onClick={logout}>Log out</button></div></div>
+    <header className="vgui-window top-window"><div className="titlebar"><button className="brand-lockup brand-home" aria-label="RetroVault Home" onClick={() => chooseCategory('Home')}><img src="/retrovault-logo.svg" alt=""/><span><strong>RetroVault</strong><small>HOME / YOUR PERSONAL GAME VAULT</small></span></button><div className="account-chip">{profile?.avatar_url && <img src={profile.avatar_url} alt="" />}<button className="account-profile-button" onClick={() => chooseCategory('My Profile')}><b>{steamDisplayName}</b><small>{gogState.account?.connected ? `GOG · ${gogState.account.username}` : 'My profile'}</small></button><button className="button small" onClick={logout}>Log out</button></div></div>
     </header>
 
     {message && <div className="notice" role="status"><span>{message}</span><button onClick={() => setMessage('')} aria-label="Dismiss">×</button></div>}
 
     <div className="app-workspace">
       <aside className="category-sidebar" aria-label="RetroVault sections">
-        <button className="sidebar-profile" onClick={() => chooseCategory(steamDisplayName)}>{profile?.avatar_url && <img src={profile.avatar_url} alt=""/>}<span><b>{steamDisplayName}</b><small>STEAM PROFILE</small></span><i>›</i></button>
-        <section className="sidebar-group"><h2>YOUR VAULT</h2>{['Home', 'Reviews', steamDisplayName, 'Wishlist', 'My Library', 'People you follow'].map((name, index) => <button key={`vault-${name}`} className={`sidebar-link ${(['Home', 'My Library', 'Wishlist'].includes(name) && tab === 'Library' && collectionView === name) || (name === 'Reviews' && tab === 'Reviews') || (name === steamDisplayName && tab === 'Settings') || (name === 'People you follow' && tab === 'Social') ? 'active' : ''}`} onClick={() => chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">{['⌂', '▤', '◉', '☆', '▦', '♧'][index]}</span>{name}</button>)}<button className={`sidebar-link ${tab === 'Achievements' ? 'active' : ''}`} onClick={() => chooseCategory('Achievements')}><span className="sidebar-icon" aria-hidden="true">★</span>Achievements</button></section>
+        <button className="sidebar-profile" onClick={() => chooseCategory(steamDisplayName)}>{profile?.avatar_url && <img src={profile.avatar_url} alt=""/>}<span><b>{steamDisplayName}</b><small>{gogState.account?.connected ? `GOG · ${gogState.account.username}` : 'MY PLAYER PROFILE'}</small></span><i>›</i></button>
+        <section className="sidebar-group"><h2>YOUR VAULT</h2>{['Home', 'Reviews', 'My Profile', 'Wishlist', 'My Library', 'People you follow'].map((name, index) => <button key={`vault-${name}`} className={`sidebar-link ${(name === 'Home' && tab === 'Home') || (['My Library', 'Wishlist'].includes(name) && tab === 'Library' && collectionView === name) || (name === 'Reviews' && tab === 'Reviews') || (name === 'My Profile' && tab === 'Profile') || (name === 'People you follow' && tab === 'Social') ? 'active' : ''}`} onClick={() => chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">{['⌂', '▤', '◉', '☆', '▦', '♧'][index]}</span>{name}</button>)}<button className={`sidebar-link ${tab === 'Achievements' ? 'active' : ''}`} onClick={() => chooseCategory('Achievements')}><span className="sidebar-icon" aria-hidden="true">★</span>Achievements</button></section>
         <section className="sidebar-group"><h2>NEW RELEASES</h2><button className={`sidebar-link ${tab === 'Library' && collectionView === 'New Releases' ? 'active' : ''}`} onClick={() => chooseCategory('Recent releases')}><span className="sidebar-icon" aria-hidden="true">◷</span>Recent releases</button></section>
         <section className="sidebar-group"><h2>TOP IN YOUR VAULT</h2><button className={`sidebar-link ${tab === 'Library' && collectionView === 'Top' ? 'active' : ''}`} onClick={() => chooseCategory('Top rated')}><span className="sidebar-icon" aria-hidden="true">▴</span>Top rated</button></section>
-        <section className="sidebar-group"><h2>DISCOVER GAMES</h2>{['Backlog Picks', 'All Games', 'Browse', 'Platforms', 'Stores', 'Collections'].map((name) => <button key={name} className={`sidebar-link ${(name === 'Platforms' && tab === 'Platforms') || (name === 'Stores' && (tab === 'Stores' || tab === 'Steam Store')) || (tab === 'Discover' && catalogBrowseCategory === name) ? 'active' : ''}`} onClick={() => chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">{name === 'Platforms' ? '▣' : name === 'Stores' ? '⌑' : name === 'Collections' ? '▤' : name === 'Backlog Picks' ? '✦' : '⌕'}</span>{name}</button>)}</section>
+        <section className="sidebar-group"><h2>DISCOVER GAMES</h2>{['Backlog Picks', 'All Games', 'Browse', 'Platforms', 'Stores', 'Collections'].map((name) => <button key={name} className={`sidebar-link ${(name === 'Platforms' && tab === 'Platforms') || (name === 'Stores' && ['Stores', 'Steam Store', 'GOG Store'].includes(tab)) || (tab === 'Discover' && catalogBrowseCategory === name) ? 'active' : ''}`} onClick={() => chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">{name === 'Platforms' ? '▣' : name === 'Stores' ? '⌑' : name === 'Collections' ? '▤' : name === 'Backlog Picks' ? '✦' : '⌕'}</span>{name}</button>)}</section>
         <section className="sidebar-group"><h2>PLATFORMS</h2>{['PC', 'PlayStation 5', 'PlayStation 4', 'PlayStation 2', 'Xbox 360', 'Nintendo Switch', 'GameCube', 'Sega Dreamcast', 'Show all'].map((name) => <button key={`platform-${name}`} className={`sidebar-link ${tab === 'Discover' && discoverPlatform === name ? 'active' : ''}`} onClick={() => name === 'Show all' ? chooseCategory('Platforms') : chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">▣</span>{name}</button>)}</section>
         <section className="sidebar-group"><h2>GENRES</h2>{['Action', 'Adventure', 'RPG', 'Shooter', 'Strategy', 'Puzzle', 'Racing', 'Sports', 'Simulation', 'Horror', 'Indie', 'Show all'].map((name) => <button key={`genre-${name}`} className={`sidebar-link ${tab === 'Discover' && discoverGenre === name ? 'active' : ''}`} onClick={() => name === 'Show all' ? chooseCategory('Genres') : chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">◆</span>{name}</button>)}</section>
         <button className={`sidebar-link ${tab === 'Activity' ? 'active' : ''}`} onClick={() => chooseCategory('Activity')}><span className="sidebar-icon" aria-hidden="true">◴</span>Activity</button>
       </aside>
       <div className="workspace-main">
 
+    {tab === 'Home' && <HomePage profile={profile} games={games} stats={stats} navigate={chooseCategory} openGame={openDetails} Cover={VaultCover} gog={gogState.account}/>}
+    {tab === 'Profile' && <ProfilePage profile={profile} games={games} stats={stats} logs={logs} saveProfile={saveProfile} navigate={chooseCategory} openGame={openDetails} gogState={gogState} Cover={VaultCover}/>}
+    {tab === 'GOG Store' && <GogStore games={games} navigate={chooseCategory} Cover={VaultCover} onAdd={addRecommendationToBacklog} onOpen={(game) => { setSelectedGame({ ...game, catalog_id: game.id, platform: 'GOG', catalog_only: true }); setGameDetails(game); setDetailsError(''); setDetailsLoading(false) }}/>}
+    {tab === 'Settings' && <ThemePicker profile={profile} onSave={saveProfile}/>}
+
     {tab === 'Library' && <>
-      <section className="stats-grid">{[['IN VAULT', stats.total], ['COMPLETED', `${stats.completed} (${stats.completion}%)`], ['BACKLOG', stats.backlog], ['STEAM PLAYTIME', prettyTime(stats.playtime)]].map(([label, value]) => <div className="vgui-window stat" key={label}><small>{label}</small><strong>{value}</strong></div>)}</section>
+      <section className="stats-grid">{[['IN VAULT', stats.total], ['COMPLETED', `${stats.completed} (${stats.completion}%)`], ['BACKLOG', stats.backlog], ['RECORDED PLAYTIME', prettyTime(stats.playtime)]].map(([label, value]) => <div className="vgui-window stat" key={label}><small>{label}</small><strong>{value}</strong></div>)}</section>
       <section className="library-layout library-only">
         <div className="vgui-window library-window"><div className="section-heading"><div><small>{collectionView === 'New Releases' || collectionView === 'Top' ? 'PERSONAL COLLECTION · FILTERED VIEW' : 'PERSONAL COLLECTION'}</small><h1>{collectionTitle} <span>{visible.length}</span></h1></div><div className="heading-actions"><button className="button" onClick={spinBacklog}>Backlog roulette</button><button className="button primary" disabled={syncing} onClick={sync}>{syncing ? 'Syncing…' : '↻ Sync Steam'}</button></div></div>
           <div className="toolbar"><input aria-label="Search library" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="Search title, platform, genre…"/><select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1) }}><option>All statuses</option>{STATUSES.map((value) => <option key={value}>{value}</option>)}</select><button className={`button ${view === 'grid' ? 'selected' : ''}`} onClick={() => setView('grid')} title="Poster grid">▦</button><button className={`button ${view === 'list' ? 'selected' : ''}`} onClick={() => setView('list')} title="Compact list">☷</button></div>
@@ -655,7 +674,7 @@ function App() {
           <PageControls page={currentPage} pageCount={pageCount} total={visible.length} onChange={setPage}/>
           {pageGames.length ? <div className={view === 'grid' ? 'game-grid' : 'game-list'}>{pageGames.map((game) => <article className="game-card" key={game.id}>
             <div className="poster"><button type="button" className="poster-trigger" aria-label={`View details for ${game.title}`} onClick={() => openDetails(game)}><GameCover title={game.title} cover={game.cover_image} backdrop={game.backdrop_url}/><span className="poster-view">Details</span></button><button className={`favorite ${game.is_favorite ? 'on' : ''}`} onClick={() => editGame(game, { is_favorite: !game.is_favorite })} title="Toggle favorite">★</button></div>
-            <div className="game-info"><button type="button" className="game-title detail-title" onClick={() => openDetails(game)}><b title={game.title}>{game.title}</b><span>{game.year || '—'} · {game.platform}</span></button><select aria-label={`Status for ${game.title}`} value={game.status} onChange={(event) => changeStatus(game, event.target.value)}>{STATUSES.map((value) => <option key={value}>{value}</option>)}</select><div className="game-meta"><span>{game.genres?.join(', ') || game.genre || 'Unclassified'}</span><span>{prettyTime(game.playtime_minutes)}</span></div><div className="game-actions"><label>★ <input aria-label={`Rating for ${game.title}`} type="number" min="1" max="10" defaultValue={game.rating || ''} placeholder="Rate" onBlur={(event) => { if (event.target.value) editGame(game, { rating: Number(event.target.value) }) }}/></label><button onClick={() => openDetails(game)}>Review</button><button onClick={() => { const notes = window.prompt('Vault notes', game.notes || ''); if (notes !== null) editGame(game, { notes }) }}>Notes</button><button onClick={() => { const price = window.prompt('Purchase price (number)', game.purchase_price ?? ''); if (price !== null && price !== '') editGame(game, { purchase_price: Number(price) }) }}>Price</button>{game.steam_app_id && <a href={`steam://run/${game.steam_app_id}`}>Play ↗</a>}<button className="delete-action" onClick={() => removeGame(game)} title="Remove from vault">Remove</button></div></div>
+            <div className="game-info"><button type="button" className="game-title detail-title" onClick={() => openDetails(game)}><b title={game.title}>{game.title}</b><span>{game.year || '—'} · {game.platform}</span></button><select aria-label={`Status for ${game.title}`} value={game.status} onChange={(event) => changeStatus(game, event.target.value)}>{STATUSES.map((value) => <option key={value}>{value}</option>)}</select><div className="game-meta"><span>{game.genres?.join(', ') || game.genre || 'Unclassified'}</span><span>{game.playtime_available === false ? 'Playtime unavailable' : prettyTime(game.playtime_minutes)}</span></div><div className="game-actions"><label>★ <input aria-label={`Rating for ${game.title}`} type="number" min="1" max="10" defaultValue={game.rating || ''} placeholder="Rate" onBlur={(event) => { if (event.target.value) editGame(game, { rating: Number(event.target.value) }) }}/></label><button onClick={() => openDetails(game)}>Review</button><button onClick={() => { const notes = window.prompt('Vault notes', game.notes || ''); if (notes !== null) editGame(game, { notes }) }}>Notes</button><button onClick={() => { const price = window.prompt('Purchase price (number)', game.purchase_price ?? ''); if (price !== null && price !== '') editGame(game, { purchase_price: Number(price) }) }}>Price</button>{game.steam_app_id && <a href={`steam://run/${game.steam_app_id}`}>Play ↗</a>}<button className="delete-action" onClick={() => removeGame(game)} title="Remove from vault">Remove</button></div></div>
           </article>)}</div> : <div className="empty-state">{games.length ? 'No games match those filters.' : 'Your vault is empty. Sync Steam or add your first game.'}</div>}
           <PageControls page={currentPage} pageCount={pageCount} total={visible.length} onChange={setPage}/>
         </div>
@@ -669,20 +688,20 @@ function App() {
       <div className="directory-footer"><span>Want a wider catalog? Search any title, including arcade and regional releases.</span><button className="button primary" onClick={() => { setTab('Add Games'); setCatalogBrowseCategory('All Games') }}>Search games</button></div>
     </section>}
 
-    {tab === 'Stores' && <section className="vgui-window content-window directory-window"><div className="section-heading"><div><small>STORE DIRECTORY // GAME SOURCES</small><h1>Game stores</h1><p>Choose a storefront. Steam is connected to live discovery shelves inside RetroVault; the others open their official stores.</p></div><span>{GAME_STORES.length} stores</span></div>
-      <div className="store-directory-grid">{GAME_STORES.map((store) => <article className={`store-directory-card ${store.internal ? 'store-integrated' : ''}`} key={store.name}><div className="store-mark">{store.mark}</div><div className="store-directory-copy"><small>{store.internal ? 'IN RETROVAULT' : 'OFFICIAL STOREFRONT'}</small><h2>{store.name}</h2><p>{store.description}</p></div>{store.internal ? <button className="button primary" onClick={() => chooseCategory('Steam Store')}>Browse Steam <span>›</span></button> : <a className="button" href={store.url} target="_blank" rel="noreferrer">Open store ↗</a>}</article>)}</div>
+    {tab === 'Stores' && <section className="vgui-window content-window directory-window"><div className="section-heading"><div><small>STORE DIRECTORY // GAME SOURCES</small><h1>Game stores</h1><p>Choose a storefront. Steam and GOG have live shelves, prices, and offers inside RetroVault. Other entries open their official storefronts.</p></div><span>{GAME_STORES.length} stores</span></div>
+      <div className="store-directory-grid">{GAME_STORES.map((store) => <article className={`store-directory-card ${store.internal ? 'store-integrated' : ''}`} key={store.name}><div className="store-mark">{store.mark}</div><div className="store-directory-copy"><small>{store.internal ? 'IN RETROVAULT' : 'OFFICIAL STOREFRONT'}</small><h2>{store.name}</h2><p>{store.description}</p></div>{store.internal ? <button className="button primary" onClick={() => chooseCategory(store.name === 'Steam' ? 'Steam Store' : 'GOG Store')}>Browse {store.name} <span>›</span></button> : <a className="button" href={store.url} target="_blank" rel="noreferrer">Open store ↗</a>}</article>)}</div>
     </section>}
 
     {tab === 'Steam Store' && <section className="vgui-window content-window steam-store-window"><div className="steam-store-hero"><div><small>STEAM STORE // ROMANIA</small><h1>Find your next game.</h1><p>Fresh releases, current bestsellers, games people are playing, and live Steam deals.</p></div><button className="button" onClick={() => { setSteamStoreLoading(true); setSteamStoreError(''); setSteamStoreRefresh((current) => current + 1) }}>↻ Refresh</button></div>
-      <div className="steam-store-toolbar"><div className="steam-store-tabs">{STEAM_STORE_CATEGORIES.map(([key, label]) => <button key={key} className={`steam-store-tab ${steamStoreCategory === key ? 'active' : ''}`} onClick={() => { setSteamStoreLoading(true); setSteamStoreError(''); setSteamStoreCategory(key) }}>{label}</button>)}</div><a href="https://store.steampowered.com/" target="_blank" rel="noreferrer">Open Steam Store ↗</a></div>
-      <div className="steam-store-caption"><span>{steamStoreCategory === 'top_sellers' ? 'Ranked by current sales revenue' : steamStoreCategory === 'most_played' ? 'Ranked by current player count' : steamStoreCategory === 'new_releases' ? 'Recently released games on Steam' : 'Current Steam discounts'}</span><small>Prices shown for Romania · refreshed from Steam</small></div>
+      <div className="steam-store-toolbar"><div className="steam-store-tabs">{STEAM_STORE_CATEGORIES.map(([key, label]) => <button key={key} className={`steam-store-tab ${steamStoreCategory === key ? 'active' : ''}`} onClick={() => { setSteamStoreLoading(true); setSteamStoreError(''); setSteamStoreCategory(key); setSteamStoreRefresh((current) => current + 1) }}>{label}</button>)}</div><a href="https://store.steampowered.com/" target="_blank" rel="noreferrer">Open Steam Store ↗</a></div>
+      <div className="steam-store-caption"><span>{steamStoreCategory === 'top_sellers' ? 'Ranked by current sales revenue' : steamStoreCategory === 'most_played' ? 'Ranked by current player count' : steamStoreCategory === 'new_releases' ? 'Recently released games on Steam' : 'Current Steam discounts'}</span><small>Romania · original store currency · cached up to 10 minutes</small></div>
       {steamStoreLoading && <div className="catalog-state" role="status">Loading the live Steam shelf…</div>}
       {steamStoreError && <div className="catalog-state" role="alert">{steamStoreError}</div>}
       {!steamStoreLoading && !steamStoreError && steamStoreGames.length > 0 && <div className="steam-store-grid">{steamStoreGames.map((game) => <article className="steam-product-card" key={`${steamStoreCategory}-${game.steam_app_id}`}>
         <button className="steam-product-image" onClick={() => openSteamStoreGame(game)} aria-label={`View ${game.title} details`}><img src={game.cover_url || game.header_image} alt="" loading="lazy"/>{game.discount_percent > 0 && <b className="steam-discount">−{game.discount_percent}%</b>}{game.rank && <span className="steam-rank">#{game.rank}</span>}</button>
         <div className="steam-product-info"><button className="steam-product-title" onClick={() => openSteamStoreGame(game)}>{game.title}</button>
           {steamStoreCategory === 'most_played' && <small className="steam-popularity">Peak today: {Number(game.peak_today || 0).toLocaleString()}</small>}
-          <div className="steam-product-price">{game.discount_percent > 0 && game.original_price != null && <del>{formatStorePrice(game.original_price, game.currency)}</del>}<b>{formatStorePrice(game.final_price, game.currency)}</b></div>
+          <StorePrice game={game}/>
           <div className="steam-product-actions"><button className="button small" disabled={steamStoreActionId === game.steam_app_id} onClick={() => addSteamStoreGame(game)}>{steamStoreActionId === game.steam_app_id ? 'Adding…' : '＋ Backlog'}</button><a className="button small" href={game.steam_url} target="_blank" rel="noreferrer">Steam ↗</a></div>
         </div>
       </article>)}</div>}
@@ -732,15 +751,15 @@ function App() {
 
     {tab === 'Activity' && <section className="vgui-window content-window"><div className="section-heading"><div><small>SYNCED DELTAS</small><h1>Playtime Activity</h1></div><span>{logs.length} events</span></div>{logs.length ? <div className="activity-list">{logs.map((log) => <article key={log.id}><span className="activity-dot"/><img src={log.catalog?.cover_url || ''} alt=""/><div><b>{log.catalog?.title || 'Unknown game'}</b><small>{new Date(log.happened_at).toLocaleString()} · {log.source}</small></div><strong>+{prettyTime(log.delta_minutes)}</strong></article>)}</div> : <div className="empty-state">Your activity appears after Steam reports new playtime during a sync.</div>}</section>}
 
-    {tab === 'Social' && <section className="social-grid"><article className="vgui-window content-window"><small>PUBLIC PROFILE</small><h1>Share your vault</h1><p>Choose whether your collection can appear on your public RetroVault profile.</p><label className="switch-row"><span>{profile?.is_public ? 'Profile is public' : 'Profile is private'}</span><input type="checkbox" checked={Boolean(profile?.is_public)} onChange={(event) => saveProfile({ is_public: event.target.checked })}/></label>{profile?.is_public && <><a className="button" target="_blank" rel="noreferrer" href={`/u/${user.id}`}>Open public profile</a><div className="snippet"><small>MARKDOWN BADGE</small><code>[![RetroVault]({window.location.origin}/api/badge/{user.id}.svg)]({window.location.origin}/u/{user.id})</code><button className="button small" onClick={() => navigator.clipboard?.writeText(`[![RetroVault](${window.location.origin}/api/badge/${user.id}.svg)](${window.location.origin}/u/${user.id})`)}>Copy snippet</button></div></>}</article>
+    {tab === 'Social' && <section className="social-grid"><article className="vgui-window content-window"><small>PUBLIC PROFILE</small><h1>Share your vault</h1><p>Choose whether your collection can appear on your public RetroVault profile.</p><label className="switch-row"><span>{profile?.is_public ? 'Profile is public' : 'Profile is private'}</span><input type="checkbox" checked={Boolean(profile?.is_public)} onChange={(event) => saveProfile({ is_public: event.target.checked }).catch(() => {})}/></label>{profile?.is_public && <><a className="button" target="_blank" rel="noreferrer" href={`/u/${user.id}`}>Open public profile</a><div className="snippet"><small>MARKDOWN BADGE</small><code>[![RetroVault]({window.location.origin}/api/badge/{user.id}.svg)]({window.location.origin}/u/{user.id})</code><button className="button small" onClick={() => navigator.clipboard?.writeText(`[![RetroVault](${window.location.origin}/api/badge/${user.id}.svg)](${window.location.origin}/u/${user.id})`)}>Copy snippet</button></div></>}</article>
       <article className="vgui-window content-window"><small>CO-OP COMPATIBILITY</small><h1>LAN Party Matcher</h1><p>Find shared co-op or multiplayer titles between your public profile and a friend’s Steam ID.</p><form className="inline-form" onSubmit={findMatches}><input inputMode="numeric" pattern="[0-9]{17}" required value={friendId} onChange={(event) => setFriendId(event.target.value)} placeholder="17-digit Steam ID"/><button className="button primary">Find games</button></form>{matches.map((game) => <div className="match-row" key={game.id}>{game.cover_url && <img src={game.cover_url} alt=""/>}<b>{game.title}</b><span>{game.co_op ? 'Co-op' : 'Multiplayer'}</span></div>)}</article></section>}
 
-    {tab === 'Settings' && <section className="vgui-window content-window settings-window"><small>CLIENT CONFIGURATION</small><h1>Interface Settings</h1><label className="setting-row"><span><b>VGUI skin</b><small>Saved to your Steam profile and applied locally.</small></span><select value={profile?.preferred_theme || 'vgui-olive'} onChange={(event) => saveProfile({ preferred_theme: event.target.value })}>{THEMES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><div className="theme-builder"><h2>Custom skin colors</h2><p>Optional overrides for background, panels, accent, and text. Defaults return when a field is cleared.</p><div className="color-grid">{[['background', 'Background'], ['panel', 'Panel'], ['accent', 'Accent'], ['text', 'Text']].map(([key, label]) => <label key={key}>{label}<input type="color" value={profile?.custom_theme?.[key] || ({ background: '#171914', panel: '#252820', accent: '#a9d4ff', text: '#e5e5dc' })[key]} onChange={(event) => setProfile((current) => ({ ...current, custom_theme: { ...current?.custom_theme, [key]: event.target.value } }))}/></label>)}</div><button className="button primary" onClick={() => saveProfile({ custom_theme: profile.custom_theme || {} })}>Save custom colors</button></div><div className="setting-row"><span><b>Steam account</b><small>{profile?.profile_url || user.id}</small></span><span>{steamDisplayName}</span></div></section>}
+    {tab === 'Settings' && <section className="vgui-window content-window settings-window"><small>CLIENT CONFIGURATION</small><h1>Interface Settings</h1><label className="setting-row"><span><b>VGUI skin</b><small>Saved to your RetroVault profile and applied throughout the site.</small></span><select value={profile?.preferred_theme || 'vgui-olive'} onChange={(event) => saveProfile({ preferred_theme: event.target.value, custom_theme: {} }).catch(() => {})}>{THEMES.map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}</select></label><div className="theme-builder"><h2>Custom skin colors</h2><p>Optional overrides for background, panels, accent, and text. Defaults return when a field is cleared.</p><div className="color-grid">{[['background', 'Background'], ['panel', 'Panel'], ['accent', 'Accent'], ['text', 'Text']].map(([key, label]) => <label key={key}>{label}<input type="color" value={profile?.custom_theme?.[key] || ({ background: '#171914', panel: '#252820', accent: '#a9d4ff', text: '#e5e5dc' })[key]} onChange={(event) => setProfile((current) => ({ ...current, custom_theme: { ...current?.custom_theme, [key]: event.target.value } }))}/></label>)}</div><button className="button primary" onClick={() => saveProfile({ custom_theme: profile.custom_theme || {} }).catch(() => {})}>Save custom colors</button></div><div className="setting-row"><span><b>Steam account</b><small>{profile?.profile_url || user.id}</small></span><span>{steamDisplayName}</span></div></section>}
 
     {selectedGame && <GameDetailsDialog key={`${selectedGame.catalog_only ? 'catalog' : 'user'}-${selectedGame.id}`} game={selectedGame} details={gameDetails} reviews={reviews.filter((review) => review.catalog_id === selectedGame.catalog_id)} loading={detailsLoading} error={detailsError} onClose={() => setSelectedGame(null)} onSaveReview={saveReview} onAddToBacklog={addRecommendationToBacklog}/>}
       </div>
     </div>
-    <footer className="statusbar"><span className={supabaseOnline ? '' : 'offline'}><i/> SUPABASE {supabaseOnline ? 'ONLINE' : 'OFFLINE'}</span><span>{games.length} TITLES · {prettyTime(stats.playtime)} TRACKED</span><span>GAME DATA: RAWG + GAMEDB + STEAM</span><span>STEAM ID {user.id}</span></footer>
+    <footer className="statusbar"><span className={supabaseOnline ? '' : 'offline'}><i/> SUPABASE {supabaseOnline ? 'ONLINE' : 'OFFLINE'}</span><span>{games.length} TITLES · {prettyTime(stats.playtime)} TRACKED</span><span>GAME DATA: RAWG + GAMEDB + STEAM + GOG</span><span>STEAM ID {user.id}</span></footer>
   </main>
 }
 
@@ -798,15 +817,15 @@ function GameDetailsDialog({ game, details, reviews = [], loading, error, onClos
   const [savingReview, setSavingReview] = useState(false)
   return <div className="details-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <section className="vgui-window details-dialog" role="dialog" aria-modal="true" aria-labelledby="details-title">
-      <header className="details-header"><div><small>GAME DOSSIER // {data.steam_app_id ? `APP ${data.steam_app_id}` : 'LOCAL ENTRY'}</small><h2 id="details-title">{data.title}</h2></div><button className="button" onClick={onClose} aria-label="Close game details">×</button></header>
+      <header className="details-header"><div><small>GAME DOSSIER // {data.steam_app_id ? `STEAM ${data.steam_app_id}` : data.gog_product_id ? `GOG ${data.gog_product_id}` : 'CATALOG ENTRY'}</small><h2 id="details-title">{data.title}</h2></div><button className="button" onClick={onClose} aria-label="Close game details">×</button></header>
       {data.artwork_hero_url && <img className="details-hero" src={data.artwork_hero_url} alt=""/>}
       <div className="details-main"><div className="details-cover"><GameCover title={data.title} cover={data.artwork_grid_url || data.cover_url || data.cover_image} backdrop={data.artwork_hero_url || data.backdrop_url}/>{data.artwork_logo_url && <img className="details-logo" src={data.artwork_logo_url} alt={`${data.title} logo`}/>}</div><div className="details-copy">
         {loading && <div className="detail-loading"><i/> Fetching store info and artwork…</div>}
         {error && <p className="detail-error">{error}</p>}
         <div className="detail-chips"><span>{data.release_year || data.year || 'Release year unknown'}</span><span>{data.platform_played || data.platform || data.platforms?.[0] || 'Multiple platforms'}</span><span>{data.status || 'In catalog'}</span>{data.metacritic_score != null && <a className="metacritic-score" href={data.metacritic_url || '#'} target="_blank" rel="noreferrer"><b>{data.metacritic_score}</b><small>METACRITIC</small></a>}{data.rawg_rating > 0 && <span>RAWG {Number(data.rawg_rating).toFixed(2)}/5 · {Number(data.rawg_rating_count || 0).toLocaleString()} ratings</span>}{data.rating_count > 0 && <span>RetroVault community {(Number(data.rating_avg || 0) / 2).toFixed(1)}/5 · {data.rating_count.toLocaleString()} ratings</span>}</div>
-        <div className="detail-facts">{data.developer && <p><b>Developer</b><span>{data.developer}</span></p>}{data.publisher && <p><b>Publisher</b><span>{data.publisher}</span></p>}{data.genres?.length > 0 && <p><b>Genres</b><span>{data.genres.join(' · ')}</span></p>}{data.playtime_minutes > 0 && <p><b>Playtime</b><span>{prettyTime(data.playtime_minutes)}</span></p>}</div>
+        <div className="detail-facts">{data.developer && <p><b>Developer</b><span>{data.developer}</span></p>}{data.publisher && <p><b>Publisher</b><span>{data.publisher}</span></p>}{data.genres?.length > 0 && <p><b>Genres</b><span>{data.genres.join(' · ')}</span></p>}{data.playtime_available === false ? <p><b>Playtime</b><span>Not reported by GOG</span></p> : data.playtime_minutes > 0 && <p><b>Playtime</b><span>{prettyTime(data.playtime_minutes)}</span></p>}</div>
         <p className="detail-summary">{data.summary || 'No description is available yet.'}</p>
-        <div className="detail-links">{steamUrl && <><a className="button primary" href={steamUrl} target="_blank" rel="noreferrer">Steam Store ↗</a><a className="button" href={`steam://run/${data.steam_app_id}`}>Play ↗</a></>}{data.rawg_id && data.slug && <a className="button" href={`https://rawg.io/games/${encodeURIComponent(data.slug)}`} target="_blank" rel="noreferrer">RAWG ↗</a>}<a className="button" href={gridUrl} target="_blank" rel="noreferrer">More artwork ↗</a></div>
+        <div className="detail-links">{data.gog_product_id && data.slug && <a className="button primary" href={`https://www.gog.com/en/game/${encodeURIComponent(data.slug)}`} target="_blank" rel="noreferrer">GOG Store ↗</a>}{steamUrl && <><a className="button primary" href={steamUrl} target="_blank" rel="noreferrer">Steam Store ↗</a><a className="button" href={`steam://run/${data.steam_app_id}`}>Play ↗</a></>}{data.rawg_id && data.slug && <a className="button" href={`https://rawg.io/games/${encodeURIComponent(data.slug)}`} target="_blank" rel="noreferrer">RAWG ↗</a>}<a className="button" href={gridUrl} target="_blank" rel="noreferrer">More artwork ↗</a></div>
       </div></div>
       {!game.catalog_only && <form className="review-editor" onSubmit={async (event) => { event.preventDefault(); setSavingReview(true); try { await onSaveReview(game, reviewRating ? Number(reviewRating) : null, reviewText.trim()) } finally { setSavingReview(false) } }}><div><small>YOUR REVIEW</small><h3>Share your take</h3></div><label>Rating<select value={reviewRating} onChange={(event) => setReviewRating(event.target.value)}><option value="">No rating</option>{Array.from({ length: 10 }, (_, index) => 10 - index).map((rating) => <option value={rating} key={rating}>{rating}/10</option>)}</select></label><label>Review<textarea rows="4" maxLength="5000" value={reviewText} onChange={(event) => setReviewText(event.target.value)} placeholder="What did you think of this game?"/><small>{reviewText.length}/5000 · public when your RetroVault profile is public</small></label><button className="button primary" disabled={savingReview}>{savingReview ? 'Saving…' : 'Save review'}</button></form>}
       {game.catalog_only && <div className="discovery-modal-action"><p>Add this game to your library and keep it in Backlog?</p><button className="button primary" onClick={() => onAddToBacklog(game)}>＋ Add to backlog</button></div>}
@@ -876,5 +895,5 @@ function PublicProfile({ steamId, message }) {
   if (error || message) return <main className="login-screen"><section className="vgui-window content-window"><h1>Profile unavailable</h1><p>{error || message}</p><a href="/">Return to RetroVault</a></section></main>
   if (!data) return <main className="boot-screen">LOADING PUBLIC PROFILE…</main>
   const { profile, games, stats } = data
-  return <main className="app-shell"><header className="vgui-window top-window"><div className="titlebar"><div><strong>RetroVault // Public Profile</strong><small>Player collection and stats</small></div><a className="button" href="/">Open RetroVault</a></div></header><section className="vgui-window content-window public-owner">{profile.avatar_url && <img src={profile.avatar_url} alt=""/>}<div><small>STEAM PROFILE</small><h1>{profile.username}</h1>{profile.profile_url && <a href={profile.profile_url} target="_blank" rel="noreferrer">View Steam profile ↗</a>}</div></section><section className="stats-grid">{[['IN VAULT', stats.total], ['COMPLETED', `${stats.completed} (${stats.completionRate}%)`], ['PLAYTIME', prettyTime(stats.playtimeMinutes)], ['MEMBER SINCE', profile.steam_created_at ? new Date(profile.steam_created_at).getFullYear() : 'Steam']].map(([label, value]) => <div className="vgui-window stat" key={label}><small>{label}</small><strong>{value}</strong></div>)}</section><section className="vgui-window content-window"><div className="section-heading"><div><small>SHARED COLLECTION</small><h1>Games</h1></div><span>{games.length} titles</span></div><div className="game-grid public-game-grid">{games.map((game) => <article className="game-card" key={game.id}><div className="poster"><GameCover title={game.title} cover={game.cover_image} backdrop={game.backdrop_url}/></div><div className="game-info"><div className="game-title"><b>{game.title}</b><span>{game.year || '—'} · {game.platform}</span></div><span>{game.status} · {prettyTime(game.playtime_minutes)}</span>{game.rating && <span>Rating: {game.rating}/10</span>}</div></article>)}</div></section><footer className="statusbar"><span>RETROVAULT PUBLIC PROFILE</span><span>GAME DATA: RAWG + GAMEDB + STEAM</span><span>STEAM ID {steamId}</span></footer></main>
+  return <main className="app-shell"><header className="vgui-window top-window"><div className="titlebar"><div><strong>RetroVault // Public Profile</strong><small>Player collection and stats</small></div><a className="button" href="/">Open RetroVault</a></div></header><section className="vgui-window content-window public-owner">{profile.avatar_url && <img src={profile.avatar_url} alt=""/>}<div><small>STEAM PROFILE</small><h1>{profile.username}</h1>{profile.profile_url && <a href={profile.profile_url} target="_blank" rel="noreferrer">View Steam profile ↗</a>}</div></section><section className="stats-grid">{[['IN VAULT', stats.total], ['COMPLETED', `${stats.completed} (${stats.completionRate}%)`], ['PLAYTIME', prettyTime(stats.playtimeMinutes)], ['MEMBER SINCE', profile.steam_created_at ? new Date(profile.steam_created_at).getFullYear() : 'Steam']].map(([label, value]) => <div className="vgui-window stat" key={label}><small>{label}</small><strong>{value}</strong></div>)}</section><section className="vgui-window content-window"><div className="section-heading"><div><small>SHARED COLLECTION</small><h1>Games</h1></div><span>{games.length} titles</span></div><div className="game-grid public-game-grid">{games.map((game) => <article className="game-card" key={game.id}><div className="poster"><GameCover title={game.title} cover={game.cover_image} backdrop={game.backdrop_url}/></div><div className="game-info"><div className="game-title"><b>{game.title}</b><span>{game.year || '—'} · {game.platform}</span></div><span>{game.status} · {game.playtime_available === false ? 'Playtime unavailable' : prettyTime(game.playtime_minutes)}</span>{game.rating && <span>Rating: {game.rating}/10</span>}</div></article>)}</div></section><footer className="statusbar"><span>RETROVAULT PUBLIC PROFILE</span><span>GAME DATA: RAWG + GAMEDB + STEAM</span><span>STEAM ID {steamId}</span></footer></main>
 }

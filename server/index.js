@@ -1,6 +1,8 @@
 import 'dotenv/config'
 import crypto from 'node:crypto'
 import express from 'express'
+import { THEMES } from '../shared/themes.js'
+import { registerGogRoutes } from './gog.js'
 import {
   addCatalogGame, deleteUserGame, getCatalogGameForUser, getLanMatches, getPublicProfileSummary, getSteamCatalogNeedingEnrichment,
   getCatalogDiscover, getCatalogGameById, getReviewsFeed, getUserGames, getUserPlayLogs, getUserProfile, searchCatalog, supabase, syncSteamGames,
@@ -11,7 +13,6 @@ const app = express()
 const PORT = Number(process.env.PORT || 3001)
 const SESSION_SECRET = process.env.SESSION_SECRET
 const STATUSES = ['Backlog', 'Playing', 'Completed', '100% Completed', 'Abandoned']
-const THEMES = ['vgui-olive', 'source-obsidian', 'hev-hazard', 'lan-party-98']
 const STEAM_OPENID = 'https://steamcommunity.com/openid/login'
 const cookieName = 'retrovault_session'
 const stateCookieName = 'retrovault_steam_state'
@@ -43,6 +44,7 @@ const requireUser = (req, res, next) => {
   next()
 }
 const appOrigin = (req) => process.env.APP_URL || `${req.protocol}://${req.get('host')}`
+registerGogRoutes(app, requireUser, appOrigin)
 const cookieOptions = (path = '/') => ({ httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path, maxAge: 30 * 24 * 60 * 60 * 1000 })
 const setSessionCookie = (res, steamId) => res.cookie(cookieName, makeSession(steamId), cookieOptions())
 const steamPlayer = async (steamId) => {
@@ -495,15 +497,15 @@ const mapSteamFeaturedItem = (item, rank) => ({
   cover_url: item.large_capsule_image || item.header_image || '',
   header_image: item.header_image || item.large_capsule_image || '',
   final_price: item.final_price ?? null, original_price: item.original_price ?? null,
-  currency: item.currency || 'RON', discount_percent: item.discount_percent || 0,
+  currency: item.currency || null, discount_percent: item.discount_percent || 0,
   rank, steam_url: `https://store.steampowered.com/app/${item.id}/`,
 })
 const mapSteamMostPlayedItem = (item, rank) => ({
   id: Number(item.steam_app_id), steam_app_id: Number(item.steam_app_id), title: item.name,
   cover_url: item.header_image || '', header_image: item.header_image || '',
   summary: item.short_description || '', release_year: Number(item.release_date?.date?.match(/(?:19|20)\d{2}/)?.[0]) || null,
-  final_price: item.price_overview?.final ?? null, original_price: item.price_overview?.initial ?? null,
-  currency: item.price_overview?.currency || 'RON', discount_percent: item.price_overview?.discount_percent || 0,
+  final_price: item.is_free ? 0 : item.price_overview?.final ?? null, original_price: item.price_overview?.initial ?? null,
+  currency: item.price_overview?.currency || null, discount_percent: item.price_overview?.discount_percent || 0,
   rank, peak_today: item.peak_today, steam_url: `https://store.steampowered.com/app/${item.steam_app_id}/`,
 })
 const fetchSteamStoreFeed = async (category) => {
@@ -621,7 +623,8 @@ app.get('/api/profile', requireUser, async (req, res) => {
   try { res.json(await getUserProfile(req.userId)) } catch (error) { res.status(500).json({ message: error.message }) }
 })
 app.patch('/api/profile', requireUser, async (req, res) => {
-  if (req.body.preferred_theme && !THEMES.includes(req.body.preferred_theme)) return res.status(400).json({ message: 'Unsupported theme.' })
+  if (req.body.preferred_theme && !THEMES.some((theme) => theme.id === req.body.preferred_theme)) return res.status(400).json({ message: 'Unsupported theme.' })
+  if (Object.hasOwn(req.body, 'bio') && (typeof req.body.bio !== 'string' || req.body.bio.length > 500)) return res.status(400).json({ message: 'Your bio can contain up to 500 characters.' })
   try { res.json(await updateUserProfile(req.userId, req.body)) } catch (error) { res.status(400).json({ message: error.message }) }
 })
 app.get('/api/achievements/steam/:steamAppId', requireUser, async (req, res) => {

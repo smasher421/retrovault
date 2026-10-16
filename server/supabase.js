@@ -13,6 +13,8 @@ const toGame = (row) => {
   return {
     id: row.id,
     user_id: row.user_id,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
     catalog_id: row.catalog_id,
     title: catalog.title || 'Untitled game',
     platform: row.platform_played || catalog.platforms?.[0] || 'Unknown',
@@ -35,6 +37,8 @@ const toGame = (row) => {
     publisher: catalog.publisher || '',
     source: row.source,
     steam_app_id: catalog.steam_app_id,
+    gog_product_id: catalog.gog_product_id,
+    playtime_available: row.source !== 'gog' || Boolean(row.playtime_synced_at),
     playtime_minutes: row.playtime_minutes || 0,
     last_played_at: row.last_played_at,
     is_favorite: row.is_favorite,
@@ -50,7 +54,7 @@ const toGame = (row) => {
   }
 }
 
-const catalogRelation = 'catalog:games_catalog(id,title,slug,platforms,release_year,genres,cover_url,backdrop_url,artwork_grid_url,artwork_hero_url,artwork_logo_url,metacritic_score,metacritic_url,screenshots,summary,developer,publisher,steam_app_id,rawg_id,metadata_provider,rating_avg,rating_count,time_to_beat_hours,multiplayer,co_op)'
+const catalogRelation = 'catalog:games_catalog(id,title,slug,platforms,release_year,genres,cover_url,backdrop_url,artwork_grid_url,artwork_hero_url,artwork_logo_url,metacritic_score,metacritic_url,screenshots,summary,developer,publisher,steam_app_id,gog_product_id,rawg_id,metadata_provider,rating_avg,rating_count,time_to_beat_hours,multiplayer,co_op)'
 
 export const getCatalogGameForUser = async (userId, userGameId) => {
   if (!supabase) throw new Error('Supabase server configuration is missing')
@@ -85,13 +89,14 @@ export const updateCatalogDetails = async (catalogId, changes) => {
 
 export const getUserGames = async (userId) => {
   if (!supabase) throw new Error('Supabase server configuration is missing')
-  const { data, error } = await supabase
-    .from('user_games')
-    .select(`*, ${catalogRelation}`)
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-  if (error) throw error
-  return (data || []).map(toGame)
+  const games = []
+  for (let offset = 0; ; offset += 500) {
+    const { data, error } = await supabase.from('user_games').select(`*, ${catalogRelation}`)
+      .eq('user_id', userId).order('created_at', { ascending: false }).order('id', { ascending: false }).range(offset, offset + 499)
+    if (error) throw error
+    games.push(...(data || []).map(toGame))
+    if ((data || []).length < 500) return games
+  }
 }
 
 export const getUserProfile = async (steamId) => {
@@ -121,6 +126,7 @@ export const updateUserProfile = async (steamId, changes) => {
   if (changes.preferred_theme) allowed.preferred_theme = changes.preferred_theme
   if (changes.custom_theme && typeof changes.custom_theme === 'object') allowed.custom_theme = changes.custom_theme
   if (typeof changes.is_public === 'boolean') allowed.is_public = changes.is_public
+  if (typeof changes.bio === 'string') allowed.bio = changes.bio.trim().slice(0, 500)
   if (Object.keys(allowed).length === 0) throw new Error('No supported profile settings were supplied')
   allowed.updated_at = new Date().toISOString()
   const { data, error } = await supabase.from('profiles').update(allowed).eq('steam_id', steamId).select().single()

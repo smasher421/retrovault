@@ -14,7 +14,8 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/api': {
           target: apiTarget,
-          changeOrigin: true,
+          // Preserve the browser origin for the API's account-linking checks.
+          changeOrigin: false,
         },
         '/auth': {
           target: apiTarget,
