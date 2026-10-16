@@ -203,6 +203,91 @@ const enrichCatalogDetails = async (cached) => {
 }
 const loadGameDetails = async (userId, userGameId) => enrichCatalogDetails(await getCatalogGameForUser(userId, userGameId))
 
+const STEAM_STORE_COUNTRY = 'ro'
+const steamFeaturedCache = { expiresAt: 0, data: null }
+const steamStoreFeedCache = new Map()
+const steamStoreAppCache = new Map()
+const fetchSteamFeaturedCategories = async () => {
+  if (steamFeaturedCache.data && steamFeaturedCache.expiresAt > Date.now()) return steamFeaturedCache.data
+  const response = await fetch(`https://store.steampowered.com/api/featuredcategories/?cc=${STEAM_STORE_COUNTRY}&l=en`, { signal: AbortSignal.timeout(10000) })
+  if (!response.ok) throw new Error(`Steam store feed failed (${response.status}).`)
+  const data = await response.json()
+  steamFeaturedCache.data = data
+  steamFeaturedCache.expiresAt = Date.now() + 10 * 60 * 1000
+  return data
+}
+const fetchSteamAppDetails = async (steamAppId) => {
+  const cached = steamStoreAppCache.get(steamAppId)
+  if (cached?.expiresAt > Date.now()) return cached.data
+  const response = await fetch(`https://store.steampowered.com/api/appdetails/?appids=${steamAppId}&cc=${STEAM_STORE_COUNTRY}&l=en`, { signal: AbortSignal.timeout(9000) })
+  if (!response.ok) throw new Error(`Steam game details failed (${response.status}).`)
+  const body = await response.json()
+  const result = body[steamAppId]
+  if (!result?.success || !result.data?.name) return null
+  steamStoreAppCache.set(steamAppId, { data: result.data, expiresAt: Date.now() + 30 * 60 * 1000 })
+  return result.data
+}
+const mapSteamFeaturedItem = (item, rank) => ({
+  id: Number(item.id), steam_app_id: Number(item.id), title: item.name,
+  cover_url: item.large_capsule_image || item.header_image || '',
+  header_image: item.header_image || item.large_capsule_image || '',
+  final_price: item.final_price ?? null, original_price: item.original_price ?? null,
+  currency: item.currency || 'RON', discount_percent: item.discount_percent || 0,
+  rank, steam_url: `https://store.steampowered.com/app/${item.id}/`,
+})
+const mapSteamMostPlayedItem = (item, rank) => ({
+  id: Number(item.steam_app_id), steam_app_id: Number(item.steam_app_id), title: item.name,
+  cover_url: item.header_image || '', header_image: item.header_image || '',
+  summary: item.short_description || '', release_year: Number(item.release_date?.date?.match(/(?:19|20)\d{2}/)?.[0]) || null,
+  final_price: item.price_overview?.final ?? null, original_price: item.price_overview?.initial ?? null,
+  currency: item.price_overview?.currency || 'RON', discount_percent: item.price_overview?.discount_percent || 0,
+  rank, peak_today: item.peak_today, steam_url: `https://store.steampowered.com/app/${item.steam_app_id}/`,
+})
+const fetchSteamStoreFeed = async (category) => {
+  const cached = steamStoreFeedCache.get(category)
+  if (cached?.expiresAt > Date.now()) return cached.games
+  let games
+  if (category === 'most_played') {
+    const response = await fetch('https://api.steampowered.com/ISteamChartsService/GetMostPlayedGames/v1/', { signal: AbortSignal.timeout(10000) })
+    if (!response.ok) throw new Error(`Steam Most Played chart failed (${response.status}).`)
+    const charts = await response.json()
+    const ranked = (charts.response?.ranks || []).slice(0, 24)
+    const enriched = []
+    for (let index = 0; index < ranked.length; index += 8) {
+      const batch = await Promise.allSettled(ranked.slice(index, index + 8).map(async (entry) => {
+        const detail = await fetchSteamAppDetails(entry.appid)
+        return detail?.type === 'game' ? mapSteamMostPlayedItem({ ...detail, steam_app_id: entry.appid, peak_today: entry.peak_in_game }, entry.rank) : null
+      }))
+      enriched.push(...batch.filter((result) => result.status === 'fulfilled').map((result) => result.value).filter(Boolean))
+    }
+    games = enriched.sort((a, b) => a.rank - b.rank)
+  } else {
+    const categories = await fetchSteamFeaturedCategories()
+    const section = categories[category]
+    if (!section) throw new Error('That Steam store category is unavailable.')
+    games = (section.items || []).filter((item) => item.id && item.name && (item.type === 0 || item.type === 'game' || item.type == null))
+      .map((item, index) => mapSteamFeaturedItem(item, index + 1))
+  }
+  steamStoreFeedCache.set(category, { games, expiresAt: Date.now() + 10 * 60 * 1000 })
+  return games
+}
+const steamCatalogRow = (steamAppId, game) => {
+  const release = game.release_date?.date?.match(/(?:19|20)\d{2}/)?.[0]
+  return {
+    catalog_key: `steam:${steamAppId}`, steam_app_id: steamAppId, title: game.name,
+    slug: game.name.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, ''),
+    release_year: Number(release) || null,
+    developer: game.developers?.[0] || null, publisher: game.publishers?.[0] || null,
+    summary: stripHtml(game.about_the_game || game.detailed_description || game.short_description || ''),
+    genres: (game.genres || []).map((genre) => genre.description).filter(Boolean),
+    platforms: ['PC', ...(game.platforms?.mac ? ['Mac'] : []), ...(game.platforms?.linux ? ['Linux'] : [])],
+    cover_url: game.header_image || null, backdrop_url: game.background || game.header_image || null,
+    metacritic_score: game.metacritic?.score ?? null, metacritic_url: game.metacritic?.url || null,
+    screenshots: (game.screenshots || []).map((shot) => shot.path_full).filter(Boolean).slice(0, 20),
+    metadata_provider: 'steam_store', metadata_updated_at: new Date().toISOString(),
+  }
+}
+
 app.get('/api/health', async (_req, res) => {
   res.json({ ok: true, supabase: Boolean(supabase), steamApi: Boolean(process.env.STEAM_API_KEY), sessionSecret: Boolean(SESSION_SECRET) })
 })
@@ -287,6 +372,26 @@ app.get('/api/catalog/:catalogId/reviews', requireUser, async (req, res) => {
   if (!/^\d+$/.test(req.params.catalogId)) return res.status(400).json({ message: 'Invalid catalog ID.' })
   try { res.json(await getReviewsFeed(req.userId, { catalogId: Number(req.params.catalogId), limit: 100 })) }
   catch (error) { res.status(500).json({ message: error.message }) }
+})
+app.get('/api/store/steam', requireUser, async (req, res) => {
+  const category = String(req.query.category || 'top_sellers')
+  if (!['top_sellers', 'most_played', 'new_releases', 'specials'].includes(category)) return res.status(400).json({ message: 'Choose a valid Steam store shelf.' })
+  try { res.json({ category, country: STEAM_STORE_COUNTRY, games: await fetchSteamStoreFeed(category) }) }
+  catch (error) { res.status(502).json({ message: error.message || 'Steam store is unavailable right now.' }) }
+})
+app.post('/api/store/steam/:steamAppId/catalog', requireUser, async (req, res) => {
+  if (!/^\d{1,10}$/.test(req.params.steamAppId)) return res.status(400).json({ message: 'Invalid Steam app ID.' })
+  try {
+    const steamAppId = Number(req.params.steamAppId)
+    const game = await fetchSteamAppDetails(steamAppId)
+    if (!game) return res.status(404).json({ message: 'Steam could not provide this game’s details.' })
+    const { data, error } = await supabase.from('games_catalog')
+      .upsert(steamCatalogRow(steamAppId, game), { onConflict: 'steam_app_id' })
+      .select('id,catalog_key,steam_app_id,igdb_id,title,slug,release_year,developer,publisher,summary,genres,platforms,cover_url,backdrop_url,artwork_grid_url,artwork_hero_url,artwork_logo_url,metacritic_score,metacritic_url,screenshots,rating_avg,rating_count,co_op,multiplayer,metadata_provider')
+      .single()
+    if (error) throw error
+    res.json(data)
+  } catch (error) { res.status(502).json({ message: error.message || 'Could not load Steam game details.' }) }
 })
 app.get('/api/catalog/:catalogId/details', requireUser, async (req, res) => {
   if (!/^\d+$/.test(req.params.catalogId)) return res.status(400).json({ message: 'Invalid catalog ID.' })

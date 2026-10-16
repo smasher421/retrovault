@@ -8,6 +8,27 @@ const CONSOLE_PLATFORMS = [
   'Super Nintendo (SNES)', 'Nintendo Entertainment System (NES)', 'Game Boy Advance', 'Game Boy Color', 'Game Boy', 'Nintendo DS', 'Nintendo 3DS',
   'Sega Dreamcast', 'Sega Saturn', 'Sega Genesis / Mega Drive', 'Sega Master System', 'Sega Game Gear', 'Arcade', 'Android', 'iOS', 'Other',
 ]
+const PLATFORM_GROUPS = [
+  { name: 'PC & Handheld', platforms: ['PC', 'Steam Deck', 'Android', 'iOS'] },
+  { name: 'PlayStation', platforms: ['PlayStation 5', 'PlayStation 4', 'PlayStation 3', 'PlayStation 2', 'PlayStation', 'PSP', 'PS Vita'] },
+  { name: 'Xbox', platforms: ['Xbox Series X/S', 'Xbox One', 'Xbox 360', 'Xbox'] },
+  { name: 'Nintendo', platforms: ['Nintendo Switch', 'Wii U', 'Wii', 'GameCube', 'Nintendo 64', 'Super Nintendo (SNES)', 'Nintendo Entertainment System (NES)', 'Game Boy Advance', 'Game Boy Color', 'Game Boy', 'Nintendo DS', 'Nintendo 3DS'] },
+  { name: 'Sega', platforms: ['Sega Dreamcast', 'Sega Saturn', 'Sega Genesis / Mega Drive', 'Sega Master System', 'Sega Game Gear'] },
+  { name: 'Arcade', platforms: ['Arcade'] },
+]
+const GAME_STORES = [
+  { name: 'Steam', mark: 'S', description: 'Live top sellers, most played, new releases, and deals.', url: 'https://store.steampowered.com/', internal: true },
+  { name: 'Epic Games Store', mark: 'E', description: 'PC releases, weekly free games, and seasonal sales.', url: 'https://store.epicgames.com/' },
+  { name: 'GOG.com', mark: 'G', description: 'PC games, classics, and DRM-free releases.', url: 'https://www.gog.com/' },
+  { name: 'PlayStation Store', mark: 'PS', description: 'Digital games and add-ons for PlayStation consoles.', url: 'https://store.playstation.com/' },
+  { name: 'Xbox Store', mark: 'X', description: 'Xbox and Windows PC games from Microsoft.', url: 'https://www.xbox.com/games/store' },
+  { name: 'Nintendo eShop', mark: 'N', description: 'Digital games for Nintendo Switch consoles.', url: 'https://www.nintendo.com/us/store/' },
+  { name: 'itch.io', mark: 'i', description: 'Indie games, experiments, and game jams.', url: 'https://itch.io/games' },
+  { name: 'Humble Store', mark: 'H', description: 'PC games, bundles, and publisher offers.', url: 'https://www.humblebundle.com/store' },
+]
+const STEAM_STORE_CATEGORIES = [
+  ['top_sellers', 'Top sellers'], ['most_played', 'Most played'], ['new_releases', 'New releases'], ['specials', 'Specials'],
+]
 const DISCOVERY_GENRES = ['Action', 'Adventure', 'RPG', 'Shooter', 'Strategy', 'Puzzle', 'Racing', 'Sports', 'Simulation', 'Platformer', 'Fighting', 'Horror', 'Indie']
 const THEMES = [
   ['vgui-olive', 'VGUI Olive'], ['source-obsidian', 'Source Obsidian'],
@@ -15,6 +36,7 @@ const THEMES = [
 ]
 const DEFAULT_FORM = { title: '', platform: 'PC', genre: '', year: '', status: 'Backlog', notes: '', cover_image: '' }
 const prettyTime = (minutes = 0) => `${Math.floor(minutes / 60).toLocaleString()}h ${minutes % 60}m`
+const formatStorePrice = (amount, currency = 'RON') => amount == null ? 'Price unavailable' : amount === 0 ? 'Free' : new Intl.NumberFormat('ro-RO', { style: 'currency', currency }).format(amount / 100)
 const readJsonResponse = async (response) => {
   if (response.headers.get('content-type')?.includes('application/json')) return response.json()
   await response.text()
@@ -51,6 +73,12 @@ function App() {
   const [discoverPage, setDiscoverPage] = useState(1)
   const [discoverHasMore, setDiscoverHasMore] = useState(false)
   const [discoverRefresh, setDiscoverRefresh] = useState(0)
+  const [steamStoreCategory, setSteamStoreCategory] = useState('top_sellers')
+  const [steamStoreGames, setSteamStoreGames] = useState([])
+  const [steamStoreLoading, setSteamStoreLoading] = useState(false)
+  const [steamStoreError, setSteamStoreError] = useState('')
+  const [steamStoreRefresh, setSteamStoreRefresh] = useState(0)
+  const [steamStoreActionId, setSteamStoreActionId] = useState(null)
   const [tab, setTab] = useState('Library')
   const [collectionView, setCollectionView] = useState('My Library')
   const [view, setView] = useState('grid')
@@ -117,6 +145,18 @@ function App() {
       .finally(() => { if (!controller.signal.aborted) setDiscoveryLoading(false) })
     return () => controller.abort()
   }, [tab, discoverPlatform, discoverGenre, discoverPage, discoverRefresh])
+
+  useEffect(() => {
+    if (tab !== 'Steam Store') return
+    const controller = new AbortController()
+    fetch(`/api/store/steam?category=${encodeURIComponent(steamStoreCategory)}`, { signal: controller.signal }).then(async (response) => {
+      const result = await readJsonResponse(response)
+      if (!response.ok) throw new Error(result.message || 'Could not load Steam store listings.')
+      setSteamStoreGames(result.games || [])
+    }).catch((error) => { if (error.name !== 'AbortError') setSteamStoreError(error.message) })
+      .finally(() => { if (!controller.signal.aborted) setSteamStoreLoading(false) })
+    return () => controller.abort()
+  }, [tab, steamStoreCategory, steamStoreRefresh])
 
   useEffect(() => {
     document.documentElement.dataset.theme = profile?.preferred_theme || 'vgui-olive'
@@ -288,8 +328,38 @@ function App() {
     } catch (error) { setDetailsError(error.message) }
     finally { setDetailsLoading(false) }
   }
+  const fetchSteamCatalogGame = async (game) => {
+    const response = await fetch(`/api/store/steam/${game.steam_app_id}/catalog`, { method: 'POST' })
+    const result = await readJsonResponse(response)
+    if (!response.ok) throw new Error(result.message || 'Could not load Steam game details.')
+    return result
+  }
+  const openSteamStoreGame = async (game) => {
+    setSelectedGame({ ...game, catalog_only: true })
+    setGameDetails(null)
+    setDetailsError('')
+    setDetailsLoading(true)
+    try {
+      const catalogGame = await fetchSteamCatalogGame(game)
+      setSelectedGame({ ...catalogGame, catalog_id: catalogGame.id, platform: 'PC', catalog_only: true })
+      setGameDetails(catalogGame)
+    } catch (error) { setDetailsError(error.message) }
+    finally { setDetailsLoading(false) }
+  }
+  const addSteamStoreGame = async (game) => {
+    setSteamStoreActionId(game.steam_app_id)
+    try {
+      const catalogGame = await fetchSteamCatalogGame(game)
+      const response = await fetch('/api/games', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ catalog_id: catalogGame.id, title: catalogGame.title, platform: 'PC', status: 'Backlog', source: 'steam' }) })
+      const result = await readJsonResponse(response)
+      if (!response.ok) throw new Error(result.message || 'Could not add game to Backlog.')
+      setGames((current) => current.some((item) => item.id === result.id) ? current : [result, ...current])
+      setMessage(`${result.title} added to your Steam Backlog.`)
+    } catch (error) { setMessage(error.message) }
+    finally { setSteamStoreActionId(null) }
+  }
   const addRecommendationToBacklog = async (game) => {
-    const platform = discoverPlatform || game.platforms?.[0] || 'PC'
+    const platform = game.platform || discoverPlatform || game.platforms?.[0] || 'PC'
     const response = await fetch('/api/games', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ catalog_id: game.id, title: game.title, platform, status: 'Backlog' }) })
     if (!response.ok) return notifyError(response)
     const added = await response.json()
@@ -323,7 +393,20 @@ function App() {
     } else if (category === 'Activity') setTab('Activity')
     else if (category === 'People you follow') setTab('Social')
     else if (category === steamDisplayName) setTab('Settings')
-    else if (category === 'Backlog Picks' || ['All Games', 'Browse', 'Platforms', 'Stores', 'Collections'].includes(category) || CONSOLE_PLATFORMS.includes(category) || DISCOVERY_GENRES.includes(category)) {
+    else if (category === 'Platforms') {
+      setTab('Platforms')
+      setCatalogBrowseCategory('Platforms')
+      setDiscoverPlatform('')
+      setDiscoverGenre('')
+    } else if (category === 'Stores') {
+      setTab('Stores')
+      setCatalogBrowseCategory('Stores')
+    } else if (category === 'Steam Store') {
+      setTab('Steam Store')
+      setCatalogBrowseCategory('Steam Store')
+      setSteamStoreLoading(true)
+      setSteamStoreError('')
+    } else if (category === 'Backlog Picks' || ['All Games', 'Browse', 'Collections'].includes(category) || CONSOLE_PLATFORMS.includes(category) || DISCOVERY_GENRES.includes(category)) {
       setTab('Discover')
       setDiscoveryLoading(true)
       setCatalogBrowseCategory(category)
@@ -354,7 +437,7 @@ function App() {
         <section className="sidebar-group"><h2>YOUR VAULT</h2>{['Home', 'Reviews', steamDisplayName, 'Wishlist', 'My Library', 'People you follow'].map((name, index) => <button key={`vault-${name}`} className={`sidebar-link ${(['Home', 'My Library', 'Wishlist'].includes(name) && tab === 'Library' && collectionView === name) || (name === 'Reviews' && tab === 'Reviews') || (name === steamDisplayName && tab === 'Settings') || (name === 'People you follow' && tab === 'Social') ? 'active' : ''}`} onClick={() => chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">{['⌂', '▤', '◉', '☆', '▦', '♧'][index]}</span>{name}</button>)}</section>
         <section className="sidebar-group"><h2>NEW RELEASES</h2><button className={`sidebar-link ${tab === 'Library' && collectionView === 'New Releases' ? 'active' : ''}`} onClick={() => chooseCategory('Recent releases')}><span className="sidebar-icon" aria-hidden="true">◷</span>Recent releases</button></section>
         <section className="sidebar-group"><h2>TOP IN YOUR VAULT</h2><button className={`sidebar-link ${tab === 'Library' && collectionView === 'Top' ? 'active' : ''}`} onClick={() => chooseCategory('Top rated')}><span className="sidebar-icon" aria-hidden="true">▴</span>Top rated</button></section>
-        <section className="sidebar-group"><h2>DISCOVER GAMES</h2>{['Backlog Picks', 'All Games', 'Browse', 'Platforms', 'Stores', 'Collections'].map((name) => <button key={name} className={`sidebar-link ${tab === 'Discover' && catalogBrowseCategory === name ? 'active' : ''}`} onClick={() => chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">{name === 'Platforms' ? '▣' : name === 'Stores' ? '⌑' : name === 'Collections' ? '▤' : name === 'Backlog Picks' ? '✦' : '⌕'}</span>{name}</button>)}</section>
+        <section className="sidebar-group"><h2>DISCOVER GAMES</h2>{['Backlog Picks', 'All Games', 'Browse', 'Platforms', 'Stores', 'Collections'].map((name) => <button key={name} className={`sidebar-link ${(name === 'Platforms' && tab === 'Platforms') || (name === 'Stores' && (tab === 'Stores' || tab === 'Steam Store')) || (tab === 'Discover' && catalogBrowseCategory === name) ? 'active' : ''}`} onClick={() => chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">{name === 'Platforms' ? '▣' : name === 'Stores' ? '⌑' : name === 'Collections' ? '▤' : name === 'Backlog Picks' ? '✦' : '⌕'}</span>{name}</button>)}</section>
         <section className="sidebar-group"><h2>PLATFORMS</h2>{['PC', 'PlayStation 5', 'PlayStation 4', 'PlayStation 2', 'Xbox 360', 'Nintendo Switch', 'GameCube', 'Sega Dreamcast', 'Show all'].map((name) => <button key={`platform-${name}`} className={`sidebar-link ${tab === 'Discover' && discoverPlatform === name ? 'active' : ''}`} onClick={() => name === 'Show all' ? chooseCategory('Platforms') : chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">▣</span>{name}</button>)}</section>
         <section className="sidebar-group"><h2>GENRES</h2>{['Action', 'Adventure', 'RPG', 'Shooter', 'Strategy', 'Puzzle', 'Racing', 'Sports', 'Simulation', 'Horror', 'Indie', 'Show all'].map((name) => <button key={`genre-${name}`} className={`sidebar-link ${tab === 'Discover' && discoverGenre === name ? 'active' : ''}`} onClick={() => name === 'Show all' ? chooseCategory('Genres') : chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">◆</span>{name}</button>)}</section>
         <button className={`sidebar-link ${tab === 'Activity' ? 'active' : ''}`} onClick={() => chooseCategory('Activity')}><span className="sidebar-icon" aria-hidden="true">◴</span>Activity</button>
@@ -376,6 +459,32 @@ function App() {
         </div>
       </section>
     </>}
+
+    {tab === 'Platforms' && <section className="vgui-window content-window directory-window"><div className="section-heading"><div><small>HARDWARE LIBRARY // ALL ERAS</small><h1>Choose a platform</h1><p>Browse games by the console or system they were made for. Select a platform to see its catalog.</p></div><span>{CONSOLE_PLATFORMS.length} platforms</span></div>
+      <div className="platform-groups">{PLATFORM_GROUPS.map((group) => <section className="platform-group" key={group.name}><div className="directory-section-heading"><small>{group.name.toUpperCase()}</small><span>{group.platforms.length} systems</span></div><div className="platform-tile-grid">{group.platforms.map((platform, index) => <button className="platform-tile" key={platform} onClick={() => chooseCategory(platform)}><span className="platform-mark">{group.name === 'PlayStation' ? 'PS' : group.name === 'Nintendo' ? 'N' : group.name === 'Xbox' ? 'X' : group.name === 'Sega' ? 'S' : group.name === 'PC & Handheld' ? 'PC' : 'AR'}</span><span><b>{platform}</b><small>Browse games <i>›</i></small></span><em>{String(index + 1).padStart(2, '0')}</em></button>)}</div></section>)}</div>
+      <div className="directory-footer"><span>Want a wider catalog? Search any title, including arcade and regional releases.</span><button className="button primary" onClick={() => { setTab('Add Games'); setCatalogBrowseCategory('All Games') }}>Search games</button></div>
+    </section>}
+
+    {tab === 'Stores' && <section className="vgui-window content-window directory-window"><div className="section-heading"><div><small>STORE DIRECTORY // GAME SOURCES</small><h1>Game stores</h1><p>Choose a storefront. Steam is connected to live discovery shelves inside RetroVault; the others open their official stores.</p></div><span>{GAME_STORES.length} stores</span></div>
+      <div className="store-directory-grid">{GAME_STORES.map((store) => <article className={`store-directory-card ${store.internal ? 'store-integrated' : ''}`} key={store.name}><div className="store-mark">{store.mark}</div><div className="store-directory-copy"><small>{store.internal ? 'IN RETROVAULT' : 'OFFICIAL STOREFRONT'}</small><h2>{store.name}</h2><p>{store.description}</p></div>{store.internal ? <button className="button primary" onClick={() => chooseCategory('Steam Store')}>Browse Steam <span>›</span></button> : <a className="button" href={store.url} target="_blank" rel="noreferrer">Open store ↗</a>}</article>)}</div>
+    </section>}
+
+    {tab === 'Steam Store' && <section className="vgui-window content-window steam-store-window"><div className="steam-store-hero"><div><small>STEAM STORE // ROMANIA</small><h1>Find your next game.</h1><p>Fresh releases, current bestsellers, games people are playing, and live Steam deals.</p></div><button className="button" onClick={() => { setSteamStoreLoading(true); setSteamStoreError(''); setSteamStoreRefresh((current) => current + 1) }}>↻ Refresh</button></div>
+      <div className="steam-store-toolbar"><div className="steam-store-tabs">{STEAM_STORE_CATEGORIES.map(([key, label]) => <button key={key} className={`steam-store-tab ${steamStoreCategory === key ? 'active' : ''}`} onClick={() => { setSteamStoreLoading(true); setSteamStoreError(''); setSteamStoreCategory(key) }}>{label}</button>)}</div><a href="https://store.steampowered.com/" target="_blank" rel="noreferrer">Open Steam Store ↗</a></div>
+      <div className="steam-store-caption"><span>{steamStoreCategory === 'top_sellers' ? 'Ranked by current sales revenue' : steamStoreCategory === 'most_played' ? 'Ranked by current player count' : steamStoreCategory === 'new_releases' ? 'Recently released games on Steam' : 'Current Steam discounts'}</span><small>Prices shown for Romania · refreshed from Steam</small></div>
+      {steamStoreLoading && <div className="catalog-state" role="status">Loading the live Steam shelf…</div>}
+      {steamStoreError && <div className="catalog-state" role="alert">{steamStoreError}</div>}
+      {!steamStoreLoading && !steamStoreError && steamStoreGames.length > 0 && <div className="steam-store-grid">{steamStoreGames.map((game) => <article className="steam-product-card" key={`${steamStoreCategory}-${game.steam_app_id}`}>
+        <button className="steam-product-image" onClick={() => openSteamStoreGame(game)} aria-label={`View ${game.title} details`}><img src={game.cover_url || game.header_image} alt="" loading="lazy"/>{game.discount_percent > 0 && <b className="steam-discount">−{game.discount_percent}%</b>}{game.rank && <span className="steam-rank">#{game.rank}</span>}</button>
+        <div className="steam-product-info"><button className="steam-product-title" onClick={() => openSteamStoreGame(game)}>{game.title}</button>
+          {steamStoreCategory === 'most_played' && <small className="steam-popularity">Peak today: {Number(game.peak_today || 0).toLocaleString()}</small>}
+          <div className="steam-product-price">{game.discount_percent > 0 && game.original_price != null && <del>{formatStorePrice(game.original_price, game.currency)}</del>}<b>{formatStorePrice(game.final_price, game.currency)}</b></div>
+          <div className="steam-product-actions"><button className="button small" disabled={steamStoreActionId === game.steam_app_id} onClick={() => addSteamStoreGame(game)}>{steamStoreActionId === game.steam_app_id ? 'Adding…' : '＋ Backlog'}</button><a className="button small" href={game.steam_url} target="_blank" rel="noreferrer">Steam ↗</a></div>
+        </div>
+      </article>)}</div>}
+      {!steamStoreLoading && !steamStoreError && !steamStoreGames.length && <div className="empty-state">Steam has no games in this shelf right now.</div>}
+      <p className="catalog-attribution">Live listings and prices are from Steam. Top sellers use Steam’s sales chart; Most Played uses its player chart. <a href="https://store.steampowered.com/charts/topselling" target="_blank" rel="noreferrer">View Steam charts ↗</a></p>
+    </section>}
 
     {tab === 'Discover' && <section className="vgui-window content-window discovery-window"><div className="section-heading"><div><small>THE RETROVAULT GAME SHELF</small><h1>{discoverPlatform || discoverGenre ? `${discoverPlatform || discoverGenre} games` : catalogBrowseCategory === 'Backlog Picks' ? 'Backlog Picks' : 'Discover games'}</h1><p>Explore beyond Steam. Pick a platform or genre in the sidebar and add anything straight to your backlog.</p></div><button className="button" onClick={() => { setDiscoveryLoading(true); setDiscoverRefresh((current) => current + 1) }}>↻ Refresh</button></div>
       <div className="discovery-toolbar"><span>{discoveryGames.length} suggestions {discoverPlatform ? `for ${discoverPlatform}` : ''} {discoverGenre ? `· ${discoverGenre}` : ''}</span><button className="button primary" onClick={() => chooseCategory('All Games')}>Browse all games</button><button className="button" onClick={() => { setTab('Add Games'); setCatalogBrowseCategory('All Games') }}>Search a title</button></div>

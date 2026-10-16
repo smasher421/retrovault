@@ -7,6 +7,8 @@ RetroVault is a Steam-connected game collection and playtime tracker. Steam Open
 - **Steam sign-in:** Steam OpenID 2.0 is verified server-side. The backend issues a 30-day HMAC-signed, `HttpOnly`, `SameSite=Lax` session cookie; production cookies use `Secure`.
 - **Steam library sync:** imports owned games, app IDs, total playtime and last-played times. Re-syncing preserves the player's status, rating, notes and favorites. A sync records increases in Steam playtime as activity deltas.
 - **Cross-platform game discovery:** browse a curated set of platform and genre recommendations from the no-key GameDB/IGDB catalog, combined with games already indexed in RetroVault. Add results directly to Backlog. The dedicated **Add Games** search merges RetroVault with GameDB title buckets.
+- **Platform and store directories:** browse PC, PlayStation, Xbox, Nintendo, Sega, handheld and arcade platforms, or choose from major game storefronts.
+- **Steam Store:** see live Top Sellers, Most Played, New Releases, and Specials for Romania. Open product details or add Steam products directly to Backlog; current prices and chart positions refresh from Steam.
 - **Separate Steam sync:** Steam import stays in the Library and continues tracking Steam playtime. Manually added console and PC editions use the same catalog, with the selected platform stored on your collection entry.
 - **Personal collection:** add manually, track a status, set a 1–10 rating, favorite a title, edit notes, or remove it from your collection.
 - **Collection views:** poster grid or compact list, search and status filters, completion totals, backlog size and Steam playtime.
@@ -137,6 +139,8 @@ Private routes require the signed Steam session cookie unless noted.
 | `GET` | `/api/reviews?limit=...` | Returns recent reviews from public profiles and the caller's own reviews. |
 | `GET` | `/api/catalog/:catalogId/reviews` | Returns reviews for a title, respecting each profile's public/private setting. |
 | `GET` | `/api/catalog/:catalogId/details` | Loads details and artwork for a catalog game before it is added to a user's collection. |
+| `GET` | `/api/store/steam?category=top_sellers\|most_played\|new_releases\|specials` | Returns the selected Steam storefront shelf, including Romanian prices and the current player chart. |
+| `POST` | `/api/store/steam/:steamAppId/catalog` | Loads a Steam product into the shared catalog so it can be viewed or added to Backlog. |
 | `GET` | `/api/steam/library` | Imports visible Steam games, writes playtime deltas and performs bounded Steam Store enrichment. |
 | `GET` | `/api/activity?limit=100` | Lists recent playtime delta records. |
 | `GET` | `/api/public/profiles/:steamId` | Public profile summary and collection; only available after the owner opts in. |
