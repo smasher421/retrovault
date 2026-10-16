@@ -633,8 +633,11 @@ app.get('/api/achievements/steam/:steamAppId', requireUser, async (req, res) => 
     res.json({ ...await fetchSteamGameAchievements(req.userId, req.params.steamAppId), title: game.title })
   } catch (error) { res.status(error.status || 502).json({ message: error.message || 'Steam achievements are unavailable right now.' }) }
 })
+app.get('/api/achievements/retro/config', requireUser, (_req, res) => {
+  res.json({ username: process.env.RETROACHIEVEMENTS_USERNAME || '', configured: Boolean(process.env.RETROACHIEVEMENTS_API_KEY) })
+})
 app.get('/api/achievements/retro', requireUser, async (req, res) => {
-  const username = String(req.query.username || '').trim()
+  const username = String(req.query.username || process.env.RETROACHIEVEMENTS_USERNAME || '').trim()
   if (!username || username.length > 64 || !/^[\p{L}\p{N}_. -]+$/u.test(username)) return res.status(400).json({ message: 'Enter a valid RetroAchievements username.' })
   const count = Math.min(Math.max(Number(req.query.count) || 100, 1), 500)
   const offset = Math.min(Math.max(Number(req.query.offset) || 0, 0), 50000)
@@ -657,7 +660,7 @@ app.get('/api/achievements/retro', requireUser, async (req, res) => {
 })
 app.get('/api/achievements/retro/:gameId', requireUser, async (req, res) => {
   if (!/^\d{1,10}$/.test(req.params.gameId)) return res.status(400).json({ message: 'Invalid RetroAchievements game ID.' })
-  const username = String(req.query.username || '').trim()
+  const username = String(req.query.username || process.env.RETROACHIEVEMENTS_USERNAME || '').trim()
   if (!username || username.length > 64 || !/^[\p{L}\p{N}_. -]+$/u.test(username)) return res.status(400).json({ message: 'Enter a valid RetroAchievements username.' })
   try {
     const body = await fetchRetroAchievements({

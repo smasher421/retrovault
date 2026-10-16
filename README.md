@@ -110,7 +110,8 @@ Vite proxies `/api/*` and `/auth/*` to Express on port `3001`. The frontend defa
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Server-only database key. Do not expose it to the browser or commit it. |
 | `SESSION_SECRET` | Yes | Long random secret used to sign session cookies. |
 | `STEAM_API_KEY` | For profile details and library sync | Steam Web API key, used only by Express. Steam OpenID sign-in itself does not require this key. |
-| `RETROACHIEVEMENTS_API_KEY` | Optional | RetroAchievements Web API key. Enables retro game achievement progress; keep it server-side in `.env`. Enter your RetroAchievements username on the Achievements page. |
+| `RETROACHIEVEMENTS_API_KEY` | Optional | RetroAchievements Web API key. Enables retro game achievement progress; keep it server-side in `.env`. |
+| `RETROACHIEVEMENTS_USERNAME` | Optional | RetroAchievements username prefilled on the Achievements page. You can change it there. |
 | `RAWG_API_KEY` | Optional | Enables RAWG cross-platform search and game details. Keep it server-side in `.env`; RetroVault displays RAWG attribution in catalog search and game details. |
 | `STEAMGRIDDB_API_KEY` | Optional | Enables SteamGridDB grid, hero and logo artwork for Steam and non-Steam games. Keep it on the Express server. |
 | `APP_URL` | Production | Public origin used to construct Steam's OpenID callback, e.g. `https://vault.example.com`. |

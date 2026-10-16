@@ -75,6 +75,19 @@ function AchievementsPage({ games }) {
   const [achievementSearch, setAchievementSearch] = useState('')
 
   useEffect(() => {
+    if (retroUsername) return
+    const controller = new AbortController()
+    fetch('/api/achievements/retro/config', { signal: controller.signal }).then(async (response) => {
+      const result = await readJsonResponse(response)
+      if (!response.ok || !result.username) return
+      window.localStorage.setItem('retrovault-retroachievements-username', result.username)
+      setRetroUsername(result.username)
+      setActiveRetroUsername(result.username)
+    }).catch((error) => { if (error.name !== 'AbortError') return })
+    return () => controller.abort()
+  }, [retroUsername])
+
+  useEffect(() => {
     if (source !== 'steam' || !steamGameId) return
     const controller = new AbortController()
     queueMicrotask(() => {
