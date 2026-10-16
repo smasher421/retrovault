@@ -15,6 +15,7 @@ RetroVault is a Steam-connected game collection and playtime tracker. Steam Open
 - **Paged library:** 24 games per page, with page controls that follow the active search and status filters.
 - **Game dossiers and artwork:** inspect descriptions, platforms, release details, Metacritic, RAWG community ratings, developer/publisher, screenshots and store links. Open screenshots in an in-site theater viewer with next/previous navigation and keyboard controls. RAWG enriches cross-platform catalog matches when its key is configured; GameDB/IGDB remains available for discovery, and SteamGridDB provides community grids, heroes and logos.
 - **Player reviews:** write a 1-10 rating and text review for any game in your collection. The Reviews page includes public RetroVault reviews with game and rating filters, plus English Steam community reviews for owned Steam games. Sort Steam reviews by helpfulness, newest, or recently updated and filter positive or negative recommendations.
+- **Achievements:** inspect unlocked and locked achievements for a selected synced Steam game, or connect a RetroAchievements username to browse classic game progress and unlock dates. Steam uses [ISteamUserStats](https://partner.steamgames.com/doc/webapi/ISteamUserStats); classic game progress comes from the [RetroAchievements Web API](https://api-docs.retroachievements.org/). Details load on demand and are cached by the API; the RetroAchievements key stays server-side.
 - **VGUI interface:** four selectable skins—VGUI Olive, Source Obsidian, HEV Hazard and LAN Party 98—with optional custom background, panel, accent and text colors.
 - **Activity:** a chronological feed of playtime increases recorded during sync.
 - **Public profiles:** profiles are private by default. A player can opt in to a public collection page and a dynamic SVG completion badge.
@@ -109,6 +110,7 @@ Vite proxies `/api/*` and `/auth/*` to Express on port `3001`. The frontend defa
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Server-only database key. Do not expose it to the browser or commit it. |
 | `SESSION_SECRET` | Yes | Long random secret used to sign session cookies. |
 | `STEAM_API_KEY` | For profile details and library sync | Steam Web API key, used only by Express. Steam OpenID sign-in itself does not require this key. |
+| `RETROACHIEVEMENTS_API_KEY` | Optional | RetroAchievements Web API key. Enables retro game achievement progress; keep it server-side in `.env`. Enter your RetroAchievements username on the Achievements page. |
 | `RAWG_API_KEY` | Optional | Enables RAWG cross-platform search and game details. Keep it server-side in `.env`; RetroVault displays RAWG attribution in catalog search and game details. |
 | `STEAMGRIDDB_API_KEY` | Optional | Enables SteamGridDB grid, hero and logo artwork for Steam and non-Steam games. Keep it on the Express server. |
 | `APP_URL` | Production | Public origin used to construct Steam's OpenID callback, e.g. `https://vault.example.com`. |
@@ -129,6 +131,9 @@ Private routes require the signed Steam session cookie unless noted.
 | `GET` | `/api/auth/me` | Returns the current Steam identity and profile. |
 | `POST` | `/api/auth/logout` | Clears the session cookie. |
 | `GET` | `/api/games` | Lists the caller's collection joined with catalog metadata. |
+| `GET` | `/api/achievements/steam/:steamAppId` | Returns the caller's earned and locked achievements for a Steam game in their synced collection. |
+| `GET` | `/api/achievements/retro?username=...&count=100&offset=0` | Lists a RetroAchievements user's game completion progress. |
+| `GET` | `/api/achievements/retro/:gameId?username=...` | Returns individual RetroAchievements unlocks and earned dates for a retro game. |
 | `GET` | `/api/games/:id/details` | Loads cached details and lazily enriches a game in the caller's collection. |
 | `POST` | `/api/games` | Adds a manual title. Accepts `title`, `platform`, `genre`/`genres`, `year`, `status`, `notes` and `cover_image`. |
 | `PATCH` | `/api/games/:id` | Changes `status`, or updates `rating`, `is_favorite`, `notes`, `review_text`, `purchase_price` or `platform_played`. |

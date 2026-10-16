@@ -92,6 +92,132 @@ const stripHtml = (html = '') => html
   .trim()
 
 const rawgResponseCache = new Map()
+const achievementResponseCache = new Map()
+const readAchievementCache = (key) => {
+  const entry = achievementResponseCache.get(key)
+  if (!entry || entry.expiresAt <= Date.now()) {
+    achievementResponseCache.delete(key)
+    return null
+  }
+  return entry.data
+}
+const writeAchievementCache = (key, data, ttlMs) => {
+  achievementResponseCache.set(key, { data, expiresAt: Date.now() + ttlMs })
+  if (achievementResponseCache.size > 500) achievementResponseCache.delete(achievementResponseCache.keys().next().value)
+  return data
+}
+const fetchAchievementJson = async (url, label) => {
+  const response = await fetch(url, { signal: AbortSignal.timeout(12000) })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(`${label} returned HTTP ${response.status}.`)
+  return body
+}
+const fetchSteamGameAchievements = async (steamId, appId) => {
+  if (!process.env.STEAM_API_KEY) {
+    const error = new Error('Add STEAM_API_KEY to the server .env to load Steam achievements.')
+    error.status = 503
+    throw error
+  }
+  const key = `steam:${steamId}:${appId}`
+  const cached = readAchievementCache(key)
+  if (cached) return cached
+  const schemaUrl = new URL('https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/')
+  schemaUrl.search = new URLSearchParams({ key: process.env.STEAM_API_KEY, appid: appId, l: 'english' })
+  const playerUrl = new URL('https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/')
+  playerUrl.search = new URLSearchParams({ key: process.env.STEAM_API_KEY, steamid: steamId, appid: appId, l: 'english' })
+  const [schema, player] = await Promise.all([
+    fetchAchievementJson(schemaUrl, 'Steam achievement schema'),
+    fetchAchievementJson(playerUrl, 'Steam player achievements'),
+  ])
+  const playerStats = player.playerstats
+  if (!playerStats?.success) {
+    const error = new Error(playerStats?.error || 'Steam does not expose achievement progress for this game yet.')
+    error.status = 422
+    throw error
+  }
+  const schemaAchievements = schema.game?.availableGameStats?.achievements || []
+  const unlocked = new Map((playerStats.achievements || []).map((achievement) => [achievement.apiname, achievement]))
+  const achievements = schemaAchievements.map((achievement) => {
+    const progress = unlocked.get(achievement.name)
+    const earned = Number(progress?.achieved) === 1
+    return {
+      id: achievement.name,
+      title: achievement.displayName || achievement.name,
+      description: achievement.description || '',
+      icon: earned ? achievement.icon : achievement.icongray || achievement.icon,
+      achieved: earned,
+      unlockedAt: earned && Number(progress.unlocktime) > 0 ? new Date(Number(progress.unlocktime) * 1000).toISOString() : null,
+      hidden: Boolean(Number(achievement.hidden)),
+    }
+  }).sort((left, right) => Number(right.achieved) - Number(left.achieved) || left.title.localeCompare(right.title))
+  return writeAchievementCache(key, {
+    source: 'Steam',
+    gameTitle: schema.game?.gameName || playerStats.gameName || '',
+    achievements,
+    completed: achievements.filter((achievement) => achievement.achieved).length,
+    total: achievements.length,
+  }, 10 * 60 * 1000)
+}
+const retroImageUrl = (path) => path ? `https://retroachievements.org${path.startsWith('/') ? '' : '/'}${path}` : ''
+const fetchRetroAchievements = async (params, cacheKey, ttlMs) => {
+  const apiKey = process.env.RETROACHIEVEMENTS_API_KEY
+  if (!apiKey) {
+    const error = new Error('Add RETROACHIEVEMENTS_API_KEY to the server .env to connect RetroAchievements.')
+    error.status = 503
+    throw error
+  }
+  const cached = readAchievementCache(cacheKey)
+  if (cached) return cached
+  const url = new URL('https://retroachievements.org/API/' + params.endpoint)
+  for (const [name, value] of Object.entries(params.query)) url.searchParams.set(name, String(value))
+  url.searchParams.set('y', apiKey)
+  const body = await fetchAchievementJson(url, 'RetroAchievements')
+  if (body.Error || body.error) {
+    const error = new Error(String(body.Error || body.error))
+    error.status = 502
+    throw error
+  }
+  return writeAchievementCache(cacheKey, body, ttlMs)
+}
+const normalizeRetroProgress = (game) => ({
+  gameId: Number(game.GameID ?? game.gameId),
+  title: game.Title ?? game.title ?? 'Unknown game',
+  imageIcon: retroImageUrl(game.ImageIcon ?? game.imageIcon),
+  consoleName: game.ConsoleName ?? game.consoleName ?? 'RetroAchievements',
+  maxPossible: Number(game.MaxPossible ?? game.maxPossible ?? 0),
+  numAwarded: Number(game.NumAwarded ?? game.numAwarded ?? 0),
+  numAwardedHardcore: Number(game.NumAwardedHardcore ?? game.numAwardedHardcore ?? 0),
+  mostRecentAwardedDate: game.MostRecentAwardedDate ?? game.mostRecentAwardedDate ?? null,
+})
+const normalizeRetroGame = (game) => {
+  const rawAchievements = game.Achievements ?? game.achievements ?? {}
+  const achievements = Object.values(rawAchievements).map((achievement) => {
+    const earnedAt = achievement.DateEarned ?? achievement.dateEarned ?? null
+    const hardcoreAt = achievement.DateEarnedHardcore ?? achievement.dateEarnedHardcore ?? null
+    const badgeName = achievement.BadgeName ?? achievement.badgeName
+    return {
+      id: Number(achievement.ID ?? achievement.id),
+      title: achievement.Title ?? achievement.title ?? 'Achievement',
+      description: achievement.Description ?? achievement.description ?? '',
+      points: Number(achievement.Points ?? achievement.points ?? 0),
+      icon: badgeName ? `https://media.retroachievements.org/Badge/${encodeURIComponent(badgeName)}.png` : '',
+      achieved: Boolean(earnedAt),
+      unlockedAt: earnedAt,
+      hardcore: Boolean(hardcoreAt),
+    }
+  }).sort((left, right) => Number(right.achieved) - Number(left.achieved) || left.title.localeCompare(right.title))
+  return {
+    gameId: Number(game.ID ?? game.id),
+    title: game.Title ?? game.title ?? 'Unknown game',
+    consoleName: game.ConsoleName ?? game.consoleName ?? 'RetroAchievements',
+    imageIcon: retroImageUrl(game.ImageIcon ?? game.imageIcon),
+    imageBoxArt: retroImageUrl(game.ImageBoxArt ?? game.imageBoxArt),
+    achievements,
+    completed: Number(game.NumAwardedToUser ?? game.numAwardedToUser ?? achievements.filter((item) => item.achieved).length),
+    total: Number(game.NumAchievements ?? game.numAchievements ?? achievements.length),
+    completion: game.UserCompletion ?? game.userCompletion ?? '',
+  }
+}
 const fetchRawgApi = async (path, params = {}, ttlMs = 60 * 60 * 1000) => {
   const apiKey = process.env.RAWG_API_KEY
   if (!apiKey) throw new Error('Add RAWG_API_KEY to .env to search the RAWG catalog.')
@@ -497,6 +623,49 @@ app.get('/api/profile', requireUser, async (req, res) => {
 app.patch('/api/profile', requireUser, async (req, res) => {
   if (req.body.preferred_theme && !THEMES.includes(req.body.preferred_theme)) return res.status(400).json({ message: 'Unsupported theme.' })
   try { res.json(await updateUserProfile(req.userId, req.body)) } catch (error) { res.status(400).json({ message: error.message }) }
+})
+app.get('/api/achievements/steam/:steamAppId', requireUser, async (req, res) => {
+  if (!/^\d{1,10}$/.test(req.params.steamAppId)) return res.status(400).json({ message: 'Invalid Steam app ID.' })
+  try {
+    const ownedGames = await getUserGames(req.userId)
+    const game = ownedGames.find((entry) => String(entry.steam_app_id || '') === req.params.steamAppId)
+    if (!game) return res.status(404).json({ message: 'This Steam game is not in your synced library.' })
+    res.json({ ...await fetchSteamGameAchievements(req.userId, req.params.steamAppId), title: game.title })
+  } catch (error) { res.status(error.status || 502).json({ message: error.message || 'Steam achievements are unavailable right now.' }) }
+})
+app.get('/api/achievements/retro', requireUser, async (req, res) => {
+  const username = String(req.query.username || '').trim()
+  if (!username || username.length > 64 || !/^[\p{L}\p{N}_. -]+$/u.test(username)) return res.status(400).json({ message: 'Enter a valid RetroAchievements username.' })
+  const count = Math.min(Math.max(Number(req.query.count) || 100, 1), 500)
+  const offset = Math.min(Math.max(Number(req.query.offset) || 0, 0), 50000)
+  try {
+    const body = await fetchRetroAchievements({
+      endpoint: 'API_GetUserCompletionProgress.php',
+      query: { u: username, c: count, o: offset },
+    }, `retro:progress:${username.toLocaleLowerCase()}:${count}:${offset}`, 10 * 60 * 1000)
+    const results = (body.Results || body.results || []).map(normalizeRetroProgress)
+    res.json({
+      username,
+      total: Number(body.Total ?? body.total ?? results.length),
+      count: Number(body.Count ?? body.count ?? results.length),
+      offset,
+      results,
+      completed: results.reduce((sum, game) => sum + game.numAwarded, 0),
+      possible: results.reduce((sum, game) => sum + game.maxPossible, 0),
+    })
+  } catch (error) { res.status(error.status || 502).json({ message: error.message || 'RetroAchievements is unavailable right now.' }) }
+})
+app.get('/api/achievements/retro/:gameId', requireUser, async (req, res) => {
+  if (!/^\d{1,10}$/.test(req.params.gameId)) return res.status(400).json({ message: 'Invalid RetroAchievements game ID.' })
+  const username = String(req.query.username || '').trim()
+  if (!username || username.length > 64 || !/^[\p{L}\p{N}_. -]+$/u.test(username)) return res.status(400).json({ message: 'Enter a valid RetroAchievements username.' })
+  try {
+    const body = await fetchRetroAchievements({
+      endpoint: 'API_GetGameInfoAndUserProgress.php',
+      query: { g: req.params.gameId, u: username },
+    }, `retro:game:${username.toLocaleLowerCase()}:${req.params.gameId}`, 15 * 60 * 1000)
+    res.json(normalizeRetroGame(body))
+  } catch (error) { res.status(error.status || 502).json({ message: error.message || 'RetroAchievements game progress is unavailable.' }) }
 })
 app.get('/api/games', requireUser, async (req, res) => {
   try { res.json(await getUserGames(req.userId)) } catch (error) { res.status(500).json({ message: error.message }) }

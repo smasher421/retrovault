@@ -52,6 +52,172 @@ function GameCover({ title, cover, backdrop }) {
   return <img loading="lazy" src={src} alt={`${title} cover`} onError={() => setBrokenSources((current) => [...current, src])}/>
 }
 
+function AchievementsPage({ games }) {
+  const steamGames = useMemo(() => games.filter((game) => game.steam_app_id).sort((a, b) => a.title.localeCompare(b.title)), [games])
+  const [source, setSource] = useState('steam')
+  const [steamGameId, setSteamGameId] = useState(() => String(games.filter((game) => game.steam_app_id).sort((a, b) => a.title.localeCompare(b.title))[0]?.steam_app_id || ''))
+  const [steamSearch, setSteamSearch] = useState('')
+  const [retroSearch, setRetroSearch] = useState('')
+  const [steamData, setSteamData] = useState(null)
+  const [steamLoading, setSteamLoading] = useState(false)
+  const [steamError, setSteamError] = useState('')
+  const [retroUsername, setRetroUsername] = useState(() => window.localStorage.getItem('retrovault-retroachievements-username') || '')
+  const [activeRetroUsername, setActiveRetroUsername] = useState(() => window.localStorage.getItem('retrovault-retroachievements-username') || '')
+  const [retroRefresh, setRetroRefresh] = useState(0)
+  const [retroGames, setRetroGames] = useState([])
+  const [retroTotal, setRetroTotal] = useState(0)
+  const [retroSelectedId, setRetroSelectedId] = useState('')
+  const [retroData, setRetroData] = useState(null)
+  const [retroLoading, setRetroLoading] = useState(false)
+  const [retroLoadingMore, setRetroLoadingMore] = useState(false)
+  const [retroError, setRetroError] = useState('')
+  const [filter, setFilter] = useState('all')
+  const [achievementSearch, setAchievementSearch] = useState('')
+
+  useEffect(() => {
+    if (source !== 'steam' || !steamGameId) return
+    const controller = new AbortController()
+    queueMicrotask(() => {
+      if (controller.signal.aborted) return
+      setSteamLoading(true)
+      setSteamError('')
+      setSteamData(null)
+      fetch(`/api/achievements/steam/${encodeURIComponent(steamGameId)}`, { signal: controller.signal }).then(async (response) => {
+        const result = await readJsonResponse(response)
+        if (!response.ok) throw new Error(result.message || 'Could not load Steam achievements.')
+        setSteamData(result)
+      }).catch((error) => { if (error.name !== 'AbortError') setSteamError(error.message) })
+        .finally(() => { if (!controller.signal.aborted) setSteamLoading(false) })
+    })
+    return () => controller.abort()
+  }, [source, steamGameId])
+
+  useEffect(() => {
+    if (source !== 'retro' || !activeRetroUsername) return
+    const controller = new AbortController()
+    queueMicrotask(() => {
+      if (controller.signal.aborted) return
+      setRetroLoading(true)
+      setRetroError('')
+      setRetroGames([])
+      setRetroData(null)
+      fetch(`/api/achievements/retro?username=${encodeURIComponent(activeRetroUsername)}&count=100&offset=0`, { signal: controller.signal }).then(async (response) => {
+        const result = await readJsonResponse(response)
+        if (!response.ok) throw new Error(result.message || 'Could not load RetroAchievements progress.')
+        setRetroGames(result.results || [])
+        setRetroTotal(Number(result.total) || 0)
+        const firstGame = (result.results || []).find((game) => game.numAwarded > 0) || result.results?.[0]
+        if (firstGame) setRetroSelectedId(String(firstGame.gameId))
+      }).catch((error) => { if (error.name !== 'AbortError') setRetroError(error.message) })
+        .finally(() => { if (!controller.signal.aborted) setRetroLoading(false) })
+    })
+    return () => controller.abort()
+  }, [source, activeRetroUsername, retroRefresh])
+
+  useEffect(() => {
+    if (source !== 'retro' || !activeRetroUsername || !retroSelectedId) return
+    const controller = new AbortController()
+    queueMicrotask(() => {
+      if (controller.signal.aborted) return
+      setRetroLoading(true)
+      setRetroError('')
+      setRetroData(null)
+      fetch(`/api/achievements/retro/${encodeURIComponent(retroSelectedId)}?username=${encodeURIComponent(activeRetroUsername)}`, { signal: controller.signal }).then(async (response) => {
+        const result = await readJsonResponse(response)
+        if (!response.ok) throw new Error(result.message || 'Could not load achievements for this game.')
+        setRetroData(result)
+      }).catch((error) => { if (error.name !== 'AbortError') setRetroError(error.message) })
+        .finally(() => { if (!controller.signal.aborted) setRetroLoading(false) })
+    })
+    return () => controller.abort()
+  }, [source, activeRetroUsername, retroSelectedId])
+
+  const activeData = source === 'steam' ? (steamGameId ? steamData : null) : (retroSelectedId ? retroData : null)
+  const activeLoading = source === 'steam' ? steamLoading : retroLoading
+  const activeError = source === 'steam' ? steamError : retroError
+  const achievements = activeData?.achievements || []
+  const completedCount = Number(activeData?.completed) || 0
+  const totalCount = Number(activeData?.total) || 0
+  const filteredAchievements = achievements.filter((achievement) => {
+    const completed = source === 'steam' ? achievement.achieved : achievement.achieved
+    const matchesFilter = filter === 'all' || (filter === 'completed' ? completed : !completed)
+    const matchesSearch = `${achievement.title} ${achievement.description}`.toLocaleLowerCase().includes(achievementSearch.toLocaleLowerCase())
+    return matchesFilter && matchesSearch
+  })
+  const visibleSteamGames = steamGames.filter((game) => game.title.toLocaleLowerCase().includes(steamSearch.toLocaleLowerCase()))
+  const visibleRetroGames = retroGames.filter((game) => `${game.title} ${game.consoleName}`.toLocaleLowerCase().includes(retroSearch.toLocaleLowerCase()))
+  const selectedRetroGame = retroGames.find((game) => String(game.gameId) === retroSelectedId)
+
+  const connectRetroAccount = (event) => {
+    event.preventDefault()
+    const username = retroUsername.trim()
+    if (!username) return
+    window.localStorage.setItem('retrovault-retroachievements-username', username)
+    setRetroUsername(username)
+    setRetroSelectedId('')
+    setActiveRetroUsername(username)
+    setRetroRefresh((current) => current + 1)
+  }
+  const loadMoreRetroGames = async () => {
+    setRetroLoadingMore(true)
+    setRetroError('')
+    try {
+      const response = await fetch(`/api/achievements/retro?username=${encodeURIComponent(activeRetroUsername)}&count=100&offset=${retroGames.length}`)
+      const result = await readJsonResponse(response)
+      if (!response.ok) throw new Error(result.message || 'Could not load more RetroAchievements games.')
+      setRetroGames((current) => [...current, ...(result.results || [])])
+      setRetroTotal(Number(result.total) || 0)
+    } catch (error) { setRetroError(error.message) }
+    finally { setRetroLoadingMore(false) }
+  }
+
+  return <section className="vgui-window content-window achievements-window">
+    <div className="section-heading"><div><small>PLAYER MILESTONES // STEAM + RETROARCH</small><h1>Achievements</h1><p>See what you have unlocked and what is still waiting in your games.</p></div><span>{steamGames.length} Steam games linked</span></div>
+    <div className="achievement-source-tabs" role="tablist" aria-label="Achievement source">
+      <button role="tab" aria-selected={source === 'steam'} className={source === 'steam' ? 'active' : ''} onClick={() => setSource('steam')}><b>Steam</b><small>Your synced PC library</small></button>
+      <button role="tab" aria-selected={source === 'retro'} className={source === 'retro' ? 'active' : ''} onClick={() => setSource('retro')}><b>RetroAchievements</b><small>RetroArch and classic games</small></button>
+    </div>
+
+    {source === 'steam' && <>
+      {steamGames.length > 0 && <div className="achievement-game-toolbar"><label>Find a Steam game<input value={steamSearch} onChange={(event) => { const value = event.target.value; const match = steamGames.find((game) => game.title.toLocaleLowerCase().includes(value.toLocaleLowerCase())); setSteamSearch(value); setSteamGameId(match ? String(match.steam_app_id) : ''); if (!match) { setSteamData(null); setSteamLoading(false); setSteamError('') } }} placeholder="Search your synced games"/></label><label>Game<select value={steamGameId} onChange={(event) => setSteamGameId(event.target.value)}>{visibleSteamGames.map((game) => <option key={game.steam_app_id} value={game.steam_app_id}>{game.title}</option>)}</select></label></div>}
+      {steamGames.length > 0 && !visibleSteamGames.length && <div className="achievement-message">No Steam game matches that search.</div>}
+      {!steamGames.length && <div className="empty-state">No Steam games are linked yet. Sync your public Steam library from My Library to see achievement progress here.</div>}
+      {steamLoading && <div className="catalog-state" role="status">Loading achievements for {steamGames.find((game) => String(game.steam_app_id) === steamGameId)?.title || 'your game'}…</div>}
+      {steamError && <div className="achievement-message" role="alert"><b>Steam progress could not be loaded.</b><span>{steamError} Make sure your Steam game details are public and the game has Steam achievements.</span></div>}
+    </>}
+
+    {source === 'retro' && <>
+      <form className="retro-account-form" onSubmit={connectRetroAccount}><label>RetroAchievements username<input value={retroUsername} onChange={(event) => setRetroUsername(event.target.value)} placeholder="Your RetroAchievements username" autoComplete="username"/></label><button className="button primary" type="submit">Connect account</button></form>
+      <p className="achievement-config-hint">Get a web API key from the <a href="https://retroachievements.org/controlpanel.php" target="_blank" rel="noreferrer">RetroAchievements control panel</a>, add it as <code>RETROACHIEVEMENTS_API_KEY</code> in the server&apos;s local <code>.env</code> file, then restart the API. The key stays on the server.</p>
+      {!activeRetroUsername && <div className="empty-state">Enter your RetroAchievements username to find your retro game progress.</div>}
+      {activeRetroUsername && retroLoading && !retroGames.length && <div className="catalog-state" role="status">Loading RetroAchievements progress…</div>}
+      {activeRetroUsername && retroError && <div className="achievement-message" role="alert"><b>RetroAchievements is not connected yet.</b><span>{retroError}</span></div>}
+      {activeRetroUsername && retroGames.length > 0 && <div className="achievement-game-toolbar"><label>Find a retro game<input value={retroSearch} onChange={(event) => { const value = event.target.value; const match = retroGames.find((game) => `${game.title} ${game.consoleName}`.toLocaleLowerCase().includes(value.toLocaleLowerCase())); setRetroSearch(value); setRetroSelectedId(match ? String(match.gameId) : ''); if (!match) { setRetroData(null); setRetroLoading(false); setRetroError('') } }} placeholder="Search your RetroAchievements games"/></label><label>Game<select value={retroSelectedId} onChange={(event) => setRetroSelectedId(event.target.value)}>{visibleRetroGames.map((game) => <option key={game.gameId} value={game.gameId}>{game.title} · {game.consoleName} ({game.numAwarded}/{game.maxPossible})</option>)}</select></label></div>}
+      {activeRetroUsername && retroGames.length > 0 && !visibleRetroGames.length && <div className="achievement-message">No retro game matches that search.</div>}
+      {activeRetroUsername && !retroLoading && !retroError && retroGames.length === 0 && <div className="empty-state">No RetroAchievements game progress was found for this username yet.</div>}
+      {retroGames.length > 0 && retroGames.length < retroTotal && <div className="achievement-load-more"><span>Showing {retroGames.length} of {retroTotal} games</span><button className="button" disabled={retroLoadingMore} onClick={loadMoreRetroGames}>{retroLoadingMore ? 'Loading…' : 'Load more games'}</button></div>}
+    </>}
+
+    {activeData && <>
+      <div className="achievement-overview"><div className="achievement-game-identity">{source === 'retro' && (activeData.imageBoxArt || activeData.imageIcon) && <img src={activeData.imageBoxArt || activeData.imageIcon} alt=""/>}<span><small>{source === 'steam' ? 'STEAM GAME' : activeData.consoleName?.toUpperCase()}</small><b>{activeData.title || activeData.gameTitle || selectedRetroGame?.title || 'Achievement progress'}</b>{source === 'retro' && <em>{activeData.consoleName}</em>}</span></div><div className="achievement-progress"><strong>{completedCount}<small> / {totalCount}</small></strong><span>achievements unlocked</span><div className="achievement-progress-track"><i style={{ width: `${totalCount ? Math.min(100, completedCount / totalCount * 100) : 0}%` }}/></div></div><div className="achievement-overview-stat"><b>{Math.max(0, totalCount - completedCount)}</b><span>still locked</span></div></div>
+      <div className="achievement-list-heading"><div><h2>{filter === 'completed' ? 'Achievements you completed' : filter === 'remaining' ? 'Still to unlock' : 'Achievement list'}</h2><span>{filteredAchievements.length} shown · completed achievements appear first</span></div><label>Search<input value={achievementSearch} onChange={(event) => setAchievementSearch(event.target.value)} placeholder="Find an achievement"/></label></div>
+      <div className="achievement-filters">{[['all', `All (${totalCount})`], ['completed', `Completed (${completedCount})`], ['remaining', `Remaining (${Math.max(0, totalCount - completedCount)})`]].map(([key, label]) => <button key={key} className={filter === key ? 'active' : ''} onClick={() => setFilter(key)}>{label}</button>)}</div>
+      {activeLoading && <div className="catalog-state" role="status">Loading achievement details…</div>}
+      {!activeLoading && filteredAchievements.length > 0 && <div className="achievement-list">{filteredAchievements.map((achievement) => {
+        const unlocked = Boolean(achievement.achieved)
+        const hidden = source === 'steam' && achievement.hidden && !unlocked
+        return <article className={`achievement-card ${unlocked ? 'unlocked' : 'locked'}`} key={achievement.id}>
+          <span className="achievement-icon">{achievement.icon ? <img src={achievement.icon} alt="" loading="lazy"/> : <b>★</b>}</span>
+          <span className="achievement-copy"><b>{hidden ? 'Hidden achievement' : achievement.title}</b><small>{hidden ? 'Unlock it in game to reveal the details.' : achievement.description || 'No description provided.'}</small></span>
+          <span className="achievement-state">{unlocked ? <><b>✓ Unlocked</b><small>{achievement.unlockedAt ? new Date(achievement.unlockedAt).toLocaleDateString() : 'Completed'}</small>{source === 'retro' && achievement.hardcore && <em>HARDCORE</em>}</> : <b>Locked</b>}</span>
+        </article>
+      })}</div>}
+      {!activeLoading && !activeError && totalCount === 0 && <div className="empty-state">This game has no achievement data available from {source === 'steam' ? 'Steam' : 'RetroAchievements'}.</div>}
+      {!activeLoading && !activeError && totalCount > 0 && !filteredAchievements.length && <div className="empty-state">No achievements match this view.</div>}
+    </>}
+  </section>
+}
+
 function PageControls({ page, pageCount, total, onChange }) {
   if (total <= PAGE_SIZE) return null
   const start = (page - 1) * PAGE_SIZE + 1
@@ -403,6 +569,7 @@ function App() {
     setQuery('')
     setStatus('All statuses')
     if (category === 'Reviews') setTab('Reviews')
+    else if (category === 'Achievements') setTab('Achievements')
     else if (['Home', 'My Library', 'Wishlist'].includes(category)) {
       setTab('Library')
       setCollectionView(category)
@@ -456,7 +623,7 @@ function App() {
     <div className="app-workspace">
       <aside className="category-sidebar" aria-label="RetroVault sections">
         <button className="sidebar-profile" onClick={() => chooseCategory(steamDisplayName)}>{profile?.avatar_url && <img src={profile.avatar_url} alt=""/>}<span><b>{steamDisplayName}</b><small>STEAM PROFILE</small></span><i>›</i></button>
-        <section className="sidebar-group"><h2>YOUR VAULT</h2>{['Home', 'Reviews', steamDisplayName, 'Wishlist', 'My Library', 'People you follow'].map((name, index) => <button key={`vault-${name}`} className={`sidebar-link ${(['Home', 'My Library', 'Wishlist'].includes(name) && tab === 'Library' && collectionView === name) || (name === 'Reviews' && tab === 'Reviews') || (name === steamDisplayName && tab === 'Settings') || (name === 'People you follow' && tab === 'Social') ? 'active' : ''}`} onClick={() => chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">{['⌂', '▤', '◉', '☆', '▦', '♧'][index]}</span>{name}</button>)}</section>
+        <section className="sidebar-group"><h2>YOUR VAULT</h2>{['Home', 'Reviews', steamDisplayName, 'Wishlist', 'My Library', 'People you follow'].map((name, index) => <button key={`vault-${name}`} className={`sidebar-link ${(['Home', 'My Library', 'Wishlist'].includes(name) && tab === 'Library' && collectionView === name) || (name === 'Reviews' && tab === 'Reviews') || (name === steamDisplayName && tab === 'Settings') || (name === 'People you follow' && tab === 'Social') ? 'active' : ''}`} onClick={() => chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">{['⌂', '▤', '◉', '☆', '▦', '♧'][index]}</span>{name}</button>)}<button className={`sidebar-link ${tab === 'Achievements' ? 'active' : ''}`} onClick={() => chooseCategory('Achievements')}><span className="sidebar-icon" aria-hidden="true">★</span>Achievements</button></section>
         <section className="sidebar-group"><h2>NEW RELEASES</h2><button className={`sidebar-link ${tab === 'Library' && collectionView === 'New Releases' ? 'active' : ''}`} onClick={() => chooseCategory('Recent releases')}><span className="sidebar-icon" aria-hidden="true">◷</span>Recent releases</button></section>
         <section className="sidebar-group"><h2>TOP IN YOUR VAULT</h2><button className={`sidebar-link ${tab === 'Library' && collectionView === 'Top' ? 'active' : ''}`} onClick={() => chooseCategory('Top rated')}><span className="sidebar-icon" aria-hidden="true">▴</span>Top rated</button></section>
         <section className="sidebar-group"><h2>DISCOVER GAMES</h2>{['Backlog Picks', 'All Games', 'Browse', 'Platforms', 'Stores', 'Collections'].map((name) => <button key={name} className={`sidebar-link ${(name === 'Platforms' && tab === 'Platforms') || (name === 'Stores' && (tab === 'Stores' || tab === 'Steam Store')) || (tab === 'Discover' && catalogBrowseCategory === name) ? 'active' : ''}`} onClick={() => chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">{name === 'Platforms' ? '▣' : name === 'Stores' ? '⌑' : name === 'Collections' ? '▤' : name === 'Backlog Picks' ? '✦' : '⌕'}</span>{name}</button>)}</section>
@@ -481,6 +648,8 @@ function App() {
         </div>
       </section>
     </>}
+
+    {tab === 'Achievements' && <AchievementsPage games={games}/>}
 
     {tab === 'Platforms' && <section className="vgui-window content-window directory-window"><div className="section-heading"><div><small>HARDWARE LIBRARY // ALL ERAS</small><h1>Choose a platform</h1><p>Browse games by the console or system they were made for. Select a platform to see its catalog.</p></div><span>{CONSOLE_PLATFORMS.length} platforms</span></div>
       <div className="platform-groups">{PLATFORM_GROUPS.map((group) => <section className="platform-group" key={group.name}><div className="directory-section-heading"><small>{group.name.toUpperCase()}</small><span>{group.platforms.length} systems</span></div><div className="platform-tile-grid">{group.platforms.map((platform, index) => <button className="platform-tile" key={platform} onClick={() => chooseCategory(platform)}><span className="platform-mark">{group.name === 'PlayStation' ? 'PS' : group.name === 'Nintendo' ? 'N' : group.name === 'Xbox' ? 'X' : group.name === 'Sega' ? 'S' : group.name === 'PC & Handheld' ? 'PC' : 'AR'}</span><span><b>{platform}</b><small>Browse games <i>›</i></small></span><em>{String(index + 1).padStart(2, '0')}</em></button>)}</div></section>)}</div>
