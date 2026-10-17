@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frontend Design System"
+  short_description: "Keep UI tokens, themes, hierarchy, and controls consistent"
+  default_prompt: "Use $frontend-design-system to extend this interface consistently."

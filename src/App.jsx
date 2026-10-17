@@ -4,6 +4,8 @@ import { THEMES, THEME_VARIABLES } from '../shared/themes.js'
 import { HomePage, ProfilePage, ThemePicker } from './components/VaultPages.jsx'
 import GogStore from './components/GogStore.jsx'
 import StorePrice from './components/StorePrice.jsx'
+import { SteamReviewsPanel, VaultReviewsPanel } from './components/Reviews.jsx'
+import './game-details.css'
 import useGogAccount from './useGogAccount.js'
 
 const STATUSES = ['Backlog', 'Playing', 'Completed', '100% Completed', 'Abandoned']
@@ -249,7 +251,6 @@ function App() {
   const [games, setGames] = useState([])
   const [logs, setLogs] = useState([])
   const [reviews, setReviews] = useState([])
-  const [reviewFeedSort, setReviewFeedSort] = useState('recent')
   const [reviewGameFilter, setReviewGameFilter] = useState('all')
   const [steamReviewAppId, setSteamReviewAppId] = useState('')
   const [discoveryGames, setDiscoveryGames] = useState([])
@@ -290,6 +291,8 @@ function App() {
   const [matches, setMatches] = useState([])
   const [roulette, setRoulette] = useState(null)
   const [selectedGame, setSelectedGame] = useState(null)
+  const detailsRequest = useRef(0)
+  const closeDetails = () => { detailsRequest.current += 1; setSelectedGame(null) }
   const [gameDetails, setGameDetails] = useState(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [detailsError, setDetailsError] = useState('')
@@ -389,12 +392,6 @@ function App() {
     for (const review of reviews) if (review.game) gamesById.set(String(review.catalog_id), review.game.title)
     return [...gamesById].map(([id, title]) => ({ id, title })).sort((a, b) => a.title.localeCompare(b.title))
   }, [reviews])
-  const visibleReviews = useMemo(() => reviews
-    .filter((review) => reviewGameFilter === 'all' || String(review.catalog_id) === reviewGameFilter)
-    .sort((a, b) => {
-      if (reviewFeedSort === 'rating') return (b.rating || 0) - (a.rating || 0) || new Date(b.updated_at) - new Date(a.updated_at)
-      return new Date(b.updated_at) - new Date(a.updated_at)
-    }), [reviews, reviewFeedSort, reviewGameFilter])
   const steamReviewGames = useMemo(() => games.filter((game) => game.steam_app_id).sort((a, b) => a.title.localeCompare(b.title)), [games])
   const selectedSteamReviewGame = steamReviewGames.find((game) => String(game.steam_app_id) === steamReviewAppId) || steamReviewGames[0] || null
 
@@ -480,13 +477,12 @@ function App() {
   }
   const saveReview = async (game, rating, reviewText) => {
     const response = await fetch(`/api/games/${game.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rating, review_text: reviewText }) })
-    if (!response.ok) return notifyError(response)
-    const updated = await response.json()
+    const updated = await readJsonResponse(response)
+    if (!response.ok) throw new Error(updated.message || 'Could not save your review.')
     setGames((items) => items.map((item) => item.id === game.id ? updated : item))
-    setSelectedGame(updated)
+    setSelectedGame((current) => current?.id === game.id && !current.catalog_only ? updated : current)
     setMessage('Your review has been saved.')
-    const reviewResponse = await fetch('/api/reviews?limit=40')
-    if (reviewResponse.ok) setReviews(await reviewResponse.json())
+    fetch('/api/reviews?limit=40').then(async (result) => { if (result.ok) setReviews(await result.json()) }).catch(() => {})
   }
   const removeGame = async (game) => {
     const response = await fetch(`/api/games/${game.id}`, { method: 'DELETE' })
@@ -511,32 +507,38 @@ function App() {
     if (!eligible.length) setMessage('Your backlog is empty. Add a game or change a status first.')
   }
   const openDetails = async (game) => {
+    const requestId = ++detailsRequest.current
     setSelectedGame(game); setGameDetails(null); setDetailsError(''); setDetailsLoading(true)
     try {
       const response = await fetch(`/api/games/${game.id}/details`)
       const result = await readJsonResponse(response)
       if (!response.ok) throw new Error(result.message || 'Could not load game details.')
+      if (requestId !== detailsRequest.current) return
       setGameDetails(result)
       setGames((items) => items.map((item) => item.id === game.id ? {
         ...item,
-        cover_image: result.artwork_grid_url || item.cover_image,
+        cover_image: result.artwork_grid_url || result.cover_url || item.cover_image,
         backdrop_url: result.artwork_hero_url || result.backdrop_url || item.backdrop_url,
         artwork_logo_url: result.artwork_logo_url || item.artwork_logo_url,
         metacritic_score: result.metacritic_score,
         summary: result.summary || item.summary,
       } : item))
-    } catch (error) { setDetailsError(error.message) }
-    finally { setDetailsLoading(false) }
+    } catch (error) { if (requestId === detailsRequest.current) setDetailsError(error.message) }
+    finally { if (requestId === detailsRequest.current) setDetailsLoading(false) }
   }
   const openCatalogDetails = async (game) => {
-      setSelectedGame({ ...game, catalog_id: game.catalog_id || game.id, catalog_only: true }); setGameDetails(null); setDetailsError(''); setDetailsLoading(true)
+    const catalogId = game.catalog_id || game.id
+    const owned = games.find((item) => item.catalog_id === catalogId)
+    if (owned) return openDetails(owned)
+    const requestId = ++detailsRequest.current
+    setSelectedGame({ ...game, catalog_id: catalogId, catalog_only: true }); setGameDetails(null); setDetailsError(''); setDetailsLoading(true)
     try {
-      const response = await fetch(`/api/catalog/${game.id}/details`)
+      const response = await fetch(`/api/catalog/${catalogId}/details`)
       const result = await readJsonResponse(response)
       if (!response.ok) throw new Error(result.message || 'Could not load game details.')
-      setGameDetails(result)
-    } catch (error) { setDetailsError(error.message) }
-    finally { setDetailsLoading(false) }
+      if (requestId === detailsRequest.current) setGameDetails(result)
+    } catch (error) { if (requestId === detailsRequest.current) setDetailsError(error.message) }
+    finally { if (requestId === detailsRequest.current) setDetailsLoading(false) }
   }
   const fetchSteamCatalogGame = async (game) => {
     const response = await fetch(`/api/store/steam/${game.steam_app_id}/catalog`, { method: 'POST' })
@@ -545,16 +547,18 @@ function App() {
     return result
   }
   const openSteamStoreGame = async (game) => {
+    const owned = games.find((item) => item.steam_app_id === game.steam_app_id)
+    if (owned) return openDetails(owned)
+    const requestId = ++detailsRequest.current
     setSelectedGame({ ...game, catalog_only: true })
-    setGameDetails(null)
-    setDetailsError('')
-    setDetailsLoading(true)
+    setGameDetails(null); setDetailsError(''); setDetailsLoading(true)
     try {
       const catalogGame = await fetchSteamCatalogGame(game)
+      if (requestId !== detailsRequest.current) return
       setSelectedGame({ ...catalogGame, catalog_id: catalogGame.id, platform: 'PC', catalog_only: true })
       setGameDetails(catalogGame)
-    } catch (error) { setDetailsError(error.message) }
-    finally { setDetailsLoading(false) }
+    } catch (error) { if (requestId === detailsRequest.current) setDetailsError(error.message) }
+    finally { if (requestId === detailsRequest.current) setDetailsLoading(false) }
   }
   const addSteamStoreGame = async (game) => {
     setSteamStoreActionId(game.steam_app_id)
@@ -568,15 +572,20 @@ function App() {
     } catch (error) { setMessage(error.message) }
     finally { setSteamStoreActionId(null) }
   }
-  const addRecommendationToBacklog = async (game) => {
+  const addRecommendationToBacklog = async (game, { keepOpen = false, writeReview = false } = {}) => {
+    const requestId = detailsRequest.current
     const platform = game.platform || discoverPlatform || game.platforms?.[0] || 'PC'
-    const response = await fetch('/api/games', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ catalog_id: game.id, title: game.title, platform, status: 'Backlog' }) })
+    const response = await fetch('/api/games', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ catalog_id: game.catalog_id || game.id, title: game.title, platform, status: 'Backlog' }) })
     if (!response.ok) return notifyError(response)
     const added = await response.json()
     setGames((current) => current.some((item) => item.id === added.id) ? current : [added, ...current])
     setDiscoveryGames((current) => current.filter((item) => item.id !== game.id))
-    setSelectedGame(null)
+    if (selectedGame && requestId === detailsRequest.current) {
+      if (keepOpen) setSelectedGame({ ...added, start_review: writeReview })
+      else closeDetails()
+    }
     setMessage(`${added.title} added to your backlog on ${platform}.`)
+    return added
   }
   const logout = async () => { await fetch('/api/auth/logout', { method: 'POST' }); setUser(null); setProfile(null); setGames([]); setLogs([]) }
 
@@ -662,7 +671,7 @@ function App() {
 
     {tab === 'Home' && <HomePage profile={profile} games={games} stats={stats} navigate={chooseCategory} openGame={openDetails} Cover={VaultCover} gog={gogState.account}/>}
     {tab === 'Profile' && <ProfilePage profile={profile} games={games} stats={stats} logs={logs} saveProfile={saveProfile} navigate={chooseCategory} openGame={openDetails} gogState={gogState} Cover={VaultCover}/>}
-    {tab === 'GOG Store' && <GogStore games={games} navigate={chooseCategory} Cover={VaultCover} onAdd={addRecommendationToBacklog} onOpen={(game) => { setSelectedGame({ ...game, catalog_id: game.id, platform: 'GOG', catalog_only: true }); setGameDetails(game); setDetailsError(''); setDetailsLoading(false) }}/>}
+    {tab === 'GOG Store' && <GogStore games={games} navigate={chooseCategory} Cover={VaultCover} onAdd={addRecommendationToBacklog} onOpen={(game) => openCatalogDetails({ ...game, platform: 'GOG' })}/>}
     {tab === 'Settings' && <ThemePicker profile={profile} onSave={saveProfile}/>}
 
     {tab === 'Library' && <>
@@ -719,12 +728,12 @@ function App() {
       <p className="catalog-attribution">Game metadata and discovery from <a href="https://github.com/LizardByte/GameDB" target="_blank" rel="noreferrer">LizardByte GameDB</a> (IGDB based), combined with your shared RetroVault catalog. Community art by <a href="https://www.steamgriddb.com/" target="_blank" rel="noreferrer">SteamGridDB</a>.</p>
     </section>}
 
-    {tab === 'Reviews' && <section className="vgui-window content-window reviews-window"><div className="section-heading"><div><small>COMMUNITY NOTES // PUBLIC PROFILES</small><h1>Reviews</h1><p>Read English Steam community reviews and public RetroVault player reviews.</p></div><span>{reviews.length} RetroVault reviews</span></div>
+    {tab === 'Reviews' && <section className="vgui-window content-window reviews-window"><div className="section-heading"><div><small>COMMUNITY NOTES // PUBLIC PROFILES</small><h1>Reviews</h1><p>Read English Steam community reviews and public RetroVault player reviews.</p></div></div>
       <div className="review-write-shortcut"><b>Your games</b><span>Choose a game to write or update your review.</span></div>
       {games.length > 0 && <div className="review-owned-games">{games.slice(0, 12).map((game) => <button className="review-game-chip" key={game.id} onClick={() => openDetails(game)}><GameCover title={game.title} cover={game.cover_image} backdrop={game.backdrop_url}/><span><b>{game.title}</b><small>{game.rating ? `${game.rating}/10` : 'Not rated'} · {game.review_text?.trim() ? 'Edit review' : 'Write review'}</small></span>›</button>)}</div>}
       {selectedSteamReviewGame ? <><div className="steam-review-game-select"><label>Steam game<select value={selectedSteamReviewGame.steam_app_id} onChange={(event) => setSteamReviewAppId(event.target.value)}>{steamReviewGames.map((game) => <option key={game.steam_app_id} value={game.steam_app_id}>{game.title}</option>)}</select></label></div><SteamReviewsPanel key={selectedSteamReviewGame.steam_app_id} steamAppId={selectedSteamReviewGame.steam_app_id} gameTitle={selectedSteamReviewGame.title}/></> : <div className="empty-state">Sync a Steam game into your library to browse its English community reviews. You can still write RetroVault reviews for any game.</div>}
-      <div className="review-feed-heading"><h2>RetroVault player reviews</h2><div className="review-feed-controls"><label>Game<select value={reviewGameFilter} onChange={(event) => setReviewGameFilter(event.target.value)}><option value="all">All games</option>{reviewGameOptions.map((game) => <option key={game.id} value={game.id}>{game.title}</option>)}</select></label><label>Sort<select value={reviewFeedSort} onChange={(event) => setReviewFeedSort(event.target.value)}><option value="recent">Newest</option><option value="rating">Highest rated</option></select></label><button className="button small" onClick={async () => { const response = await fetch('/api/reviews?limit=40'); if (response.ok) setReviews(await response.json()) }}>Refresh</button></div></div>
-      {visibleReviews.length ? <div className="review-feed">{visibleReviews.map((review) => <article className="review-card" key={review.id}><div className="review-game-cover"><GameCover title={review.game.title} cover={review.game.artwork_grid_url || review.game.cover_url} backdrop={review.game.artwork_hero_url || review.game.backdrop_url}/></div><div className="review-content"><div className="review-card-heading"><div><b>{review.game.title}</b><small>{review.author.username} · {new Date(review.updated_at).toLocaleDateString()}</small></div><strong>{review.rating ? `${review.rating}/10` : '—'}</strong></div><p>{review.review_text}</p><button className="button small" onClick={() => { const ownedGame = games.find((game) => game.catalog_id === review.catalog_id); ownedGame ? openDetails(ownedGame) : openCatalogDetails({ ...review.game, id: review.catalog_id }) }}>{review.is_mine ? 'Edit your review' : 'Game details'}</button></div></article>)}</div> : <div className="empty-state">No reviews match this filter. Open one of your games and be the first to share a review.</div>}
+      <div className="review-feed-controls"><label>Game<select value={reviewGameFilter} onChange={(event) => setReviewGameFilter(event.target.value)}><option value="all">All games</option>{reviewGameOptions.map((game) => <option key={game.id} value={game.id}>{game.title}</option>)}</select></label></div>
+      <VaultReviewsPanel key={reviewGameFilter} catalogId={reviewGameFilter === 'all' ? undefined : reviewGameFilter} refreshKey={reviews.map((review) => `${review.id}:${review.updated_at}`).join('|')} onOpenGame={openCatalogDetails}/>
     </section>}
 
     {tab === 'Add Games' && <section className="vgui-window content-window add-games-window"><div className="add-games-heading"><div><small>CROSS-PLATFORM CATALOG // {catalogBrowseCategory.toUpperCase()}</small><h1>Add games from any era</h1><p>Search PC, PlayStation, Nintendo, Sega, handheld, and arcade releases. Pick a result to fill in its details, then choose the edition you own.</p></div><span className="catalog-count">{stats.total} IN YOUR VAULT</span></div>
@@ -756,7 +765,7 @@ function App() {
 
     {tab === 'Settings' && <section className="vgui-window content-window settings-window"><small>CLIENT CONFIGURATION</small><h1>Interface Settings</h1><label className="setting-row"><span><b>VGUI skin</b><small>Saved to your RetroVault profile and applied throughout the site.</small></span><select value={profile?.preferred_theme || 'vgui-olive'} onChange={(event) => saveProfile({ preferred_theme: event.target.value, custom_theme: {} }).catch(() => {})}>{THEMES.map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}</select></label><div className="theme-builder"><h2>Custom skin colors</h2><p>Optional overrides for background, panels, accent, and text. Defaults return when a field is cleared.</p><div className="color-grid">{[['background', 'Background'], ['panel', 'Panel'], ['accent', 'Accent'], ['text', 'Text']].map(([key, label]) => <label key={key}>{label}<input type="color" value={profile?.custom_theme?.[key] || ({ background: '#171914', panel: '#252820', accent: '#a9d4ff', text: '#e5e5dc' })[key]} onChange={(event) => setProfile((current) => ({ ...current, custom_theme: { ...current?.custom_theme, [key]: event.target.value } }))}/></label>)}</div><button className="button primary" onClick={() => saveProfile({ custom_theme: profile.custom_theme || {} }).catch(() => {})}>Save custom colors</button></div><div className="setting-row"><span><b>Steam account</b><small>{profile?.profile_url || user.id}</small></span><span>{steamDisplayName}</span></div></section>}
 
-    {selectedGame && <GameDetailsDialog key={`${selectedGame.catalog_only ? 'catalog' : 'user'}-${selectedGame.id}`} game={selectedGame} details={gameDetails} reviews={reviews.filter((review) => review.catalog_id === selectedGame.catalog_id)} loading={detailsLoading} error={detailsError} onClose={() => setSelectedGame(null)} onSaveReview={saveReview} onAddToBacklog={addRecommendationToBacklog}/>}
+    {selectedGame && <GameDetailsDialog key={`${selectedGame.catalog_only ? 'catalog' : 'user'}-${selectedGame.id}`} game={selectedGame} details={gameDetails} loading={detailsLoading} error={detailsError} onClose={closeDetails} onSaveReview={saveReview} onAddToBacklog={addRecommendationToBacklog}/>}
       </div>
     </div>
     <footer className="statusbar"><span className={supabaseOnline ? '' : 'offline'}><i/> SUPABASE {supabaseOnline ? 'ONLINE' : 'OFFLINE'}</span><span>{games.length} TITLES · {prettyTime(stats.playtime)} TRACKED</span><span>GAME DATA: RAWG + GAMEDB + STEAM + GOG</span><span>STEAM ID {user.id}</span></footer>
@@ -765,56 +774,28 @@ function App() {
 
 export default App
 
-function SteamReviewsPanel({ steamAppId, gameTitle }) {
-  const [sort, setSort] = useState('helpful')
-  const [sentiment, setSentiment] = useState('all')
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [refresh, setRefresh] = useState(0)
-
-  useEffect(() => {
-    const controller = new AbortController()
-    const params = new URLSearchParams({ sort, sentiment })
-    fetch(`/api/steam/reviews/${steamAppId}?${params}`, { signal: controller.signal })
-      .then(async (response) => {
-        const result = await readJsonResponse(response)
-        if (!response.ok) throw new Error(result.message || 'Steam reviews are unavailable right now.')
-        setData(result)
-      })
-      .catch((reason) => { if (reason.name !== 'AbortError') setError(reason.message) })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
-    return () => controller.abort()
-  }, [steamAppId, sort, sentiment, refresh])
-
-  const reviews = data?.reviews || []
-  const reviewsUrl = `https://store.steampowered.com/app/${steamAppId}/`
-  return <section className="steam-reviews-panel">
-    <div className="review-feed-heading steam-review-heading"><div><h2>Steam community reviews</h2><small>English · {Number(data?.total_reviews || 0).toLocaleString()} matching reviews</small></div><a href={reviewsUrl} target="_blank" rel="noreferrer">{gameTitle} on Steam ↗</a></div>
-    <div className="steam-review-toolbar">
-      <label>Order<select value={sort} onChange={(event) => { setLoading(true); setError(''); setSort(event.target.value) }}><option value="helpful">Most helpful</option><option value="recent">Newest</option><option value="updated">Recently updated</option></select></label>
-      <label>Sentiment<select value={sentiment} onChange={(event) => { setLoading(true); setError(''); setSentiment(event.target.value) }}><option value="all">All reviews</option><option value="positive">Positive</option><option value="negative">Negative</option></select></label>
-      <button className="button small" disabled={loading} onClick={() => { setLoading(true); setError(''); setRefresh((current) => current + 1) }}>Refresh</button>
-      <span>Sorted by Steam helpfulness votes</span>
-    </div>
-    {loading && <div className="steam-review-state" role="status">Loading English Steam reviews…</div>}
-    {error && <div className="steam-review-state review-error" role="alert">{error}</div>}
-    {!loading && !error && reviews.length > 0 && <div className="steam-review-list">{reviews.map((review) => <article className="steam-review-card" key={review.review_id}>
-      <div className="steam-review-meta"><strong className={review.recommended ? 'positive' : 'negative'}>{review.recommended ? 'Recommended' : 'Not recommended'}</strong><span>{review.author}{review.created_at ? ` · ${new Date(review.created_at).toLocaleDateString()}` : ''}</span><span>{prettyTime(review.playtime_minutes)} played</span><span>{Number(review.helpful).toLocaleString()} found helpful</span></div>
-      <p>{review.text}</p>
-    </article>)}</div>}
-    {!loading && !error && reviews.length === 0 && <div className="steam-review-state">No English reviews found for this filter.</div>}
-  </section>
-}
-
-function GameDetailsDialog({ game, details, reviews = [], loading, error, onClose, onSaveReview, onAddToBacklog }) {
-  const data = details || game
+function GameDetailsDialog({ game, details, loading, error, onClose, onSaveReview, onAddToBacklog }) {
+  const data = { ...game, ...details }
   const screenshots = data.screenshots || []
   const steamUrl = data.steam_app_id ? `https://store.steampowered.com/app/${data.steam_app_id}/` : null
   const gridUrl = `https://www.steamgriddb.com/search/grids?term=${encodeURIComponent(data.title)}`
   const [reviewRating, setReviewRating] = useState(game.rating || '')
   const [reviewText, setReviewText] = useState(game.review_text || '')
   const [savingReview, setSavingReview] = useState(false)
+  const [editingReview, setEditingReview] = useState(Boolean(game.start_review))
+  const [actionError, setActionError] = useState('')
+  const [adding, setAdding] = useState(false)
+  const [reviewVersion, setReviewVersion] = useState(0)
+  const [reviewSource, setReviewSource] = useState(game.steam_app_id ? 'steam' : 'vault')
+  const catalogId = game.catalog_id || details?.id
+  const addToLibrary = async (writeReview) => {
+    setAdding(true); setActionError('')
+    try {
+      const added = await onAddToBacklog(game, { keepOpen: true, writeReview })
+      if (!added) setActionError('Could not add this game. Please try again.')
+    } catch (reason) { setActionError(reason.message) }
+    finally { setAdding(false) }
+  }
   return <div className="details-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <section className="vgui-window details-dialog" role="dialog" aria-modal="true" aria-labelledby="details-title">
       <header className="details-header"><div><small>GAME DOSSIER // {data.steam_app_id ? `STEAM ${data.steam_app_id}` : data.gog_product_id ? `GOG ${data.gog_product_id}` : 'CATALOG ENTRY'}</small><h2 id="details-title">{data.title}</h2></div><button className="button" onClick={onClose} aria-label="Close game details">×</button></header>
@@ -827,11 +808,23 @@ function GameDetailsDialog({ game, details, reviews = [], loading, error, onClos
         <p className="detail-summary">{data.summary || 'No description is available yet.'}</p>
         <div className="detail-links">{data.gog_product_id && data.slug && <a className="button primary" href={`https://www.gog.com/en/game/${encodeURIComponent(data.slug)}`} target="_blank" rel="noreferrer">GOG Store ↗</a>}{steamUrl && <><a className="button primary" href={steamUrl} target="_blank" rel="noreferrer">Steam Store ↗</a><a className="button" href={`steam://run/${data.steam_app_id}`}>Play ↗</a></>}{data.rawg_id && data.slug && <a className="button" href={`https://rawg.io/games/${encodeURIComponent(data.slug)}`} target="_blank" rel="noreferrer">RAWG ↗</a>}<a className="button" href={gridUrl} target="_blank" rel="noreferrer">More artwork ↗</a></div>
       </div></div>
-      {!game.catalog_only && <form className="review-editor" onSubmit={async (event) => { event.preventDefault(); setSavingReview(true); try { await onSaveReview(game, reviewRating ? Number(reviewRating) : null, reviewText.trim()) } finally { setSavingReview(false) } }}><div><small>YOUR REVIEW</small><h3>Share your take</h3></div><label>Rating<select value={reviewRating} onChange={(event) => setReviewRating(event.target.value)}><option value="">No rating</option>{Array.from({ length: 10 }, (_, index) => 10 - index).map((rating) => <option value={rating} key={rating}>{rating}/10</option>)}</select></label><label>Review<textarea rows="4" maxLength="5000" value={reviewText} onChange={(event) => setReviewText(event.target.value)} placeholder="What did you think of this game?"/><small>{reviewText.length}/5000 · public when your RetroVault profile is public</small></label><button className="button primary" disabled={savingReview}>{savingReview ? 'Saving…' : 'Save review'}</button></form>}
-      {game.catalog_only && <div className="discovery-modal-action"><p>Add this game to your library and keep it in Backlog?</p><button className="button primary" onClick={() => onAddToBacklog(game)}>＋ Add to backlog</button></div>}
-      {data.steam_app_id && <SteamReviewsPanel steamAppId={data.steam_app_id} gameTitle={data.title}/>}
-      {reviews.length > 0 && <section className="details-community-reviews"><div className="review-feed-heading"><h3>RetroVault player reviews</h3><span>{reviews.length} reviews</span></div>{reviews.map((review) => <article className="external-review" key={review.id}><div className="community-review-author">{review.author.avatar_url && <img src={review.author.avatar_url} alt=""/>}<span><b>{review.author.username}{review.is_mine ? ' · You' : ''}</b><small>{review.rating ? `${review.rating}/10` : 'No rating'} · {new Date(review.updated_at).toLocaleDateString()}</small></span></div><p>{review.review_text}</p></article>)}</section>}
       {screenshots.length > 0 && <ScreenshotGallery images={screenshots} title={data.title}/>}
+      <section className="details-your-game" aria-label="Your game and review">
+        <div className="details-actions"><div><small>YOUR VAULT</small><h3>{game.catalog_only ? 'Make room for your next game' : 'Your take on this game'}</h3><p>{game.catalog_only ? 'Save it for later, or add it to your library and write a review.' : `${game.status || 'In your library'}${game.rating ? ` · Your rating: ${game.rating}/10` : ''}`}</p></div>
+          <div className="details-action-buttons">{game.catalog_only ? <><button className="button primary" disabled={adding || loading || !catalogId} onClick={() => addToLibrary(false)}>{adding ? 'Adding…' : '＋ Add to backlog'}</button><button className="button" disabled={adding || loading || !catalogId} onClick={() => addToLibrary(true)}>Add & write review</button></> : <button className="button primary" aria-expanded={editingReview} aria-controls="your-review-editor" onClick={() => setEditingReview((value) => !value)}>{editingReview ? 'Close editor' : game.review_text ? 'Edit your review' : 'Write a review'}</button>}</div>
+        </div>
+        {actionError && <p className="detail-error" role="alert">{actionError}</p>}
+        {!game.catalog_only && editingReview && <form id="your-review-editor" className="review-editor" onSubmit={async (event) => {
+          event.preventDefault(); setSavingReview(true); setActionError('')
+          try { await onSaveReview(game, reviewRating ? Number(reviewRating) : null, reviewText.trim()); setReviewVersion((value) => value + 1); setEditingReview(false) }
+          catch (reason) { setActionError(reason.message) }
+          finally { setSavingReview(false) }
+        }}><div><small>YOUR REVIEW</small><h3>Share your take</h3></div><label>Rating<select value={reviewRating} onChange={(event) => setReviewRating(event.target.value)}><option value="">No rating</option>{Array.from({ length: 10 }, (_, index) => 10 - index).map((rating) => <option value={rating} key={rating}>{rating}/10</option>)}</select></label><label>Review<textarea autoFocus rows="4" maxLength="5000" value={reviewText} onChange={(event) => setReviewText(event.target.value)} placeholder="What did you think of this game?"/><small>{reviewText.length}/5000 · public when your RetroVault profile is public</small></label><button className="button primary" disabled={savingReview}>{savingReview ? 'Saving…' : 'Save review'}</button></form>}
+      </section>
+      <section className="details-community" aria-label="Community reviews">
+        <div className="details-community-heading"><div><small>COMMUNITY</small><h3>What players think</h3></div>{data.steam_app_id && <div className="review-source-picker" role="group" aria-label="Review source"><button className="button small" aria-pressed={reviewSource === 'steam'} onClick={() => setReviewSource('steam')}>Steam · English</button><button className="button small" aria-pressed={reviewSource === 'vault'} onClick={() => setReviewSource('vault')}>RetroVault</button></div>}</div>
+        {data.steam_app_id && reviewSource === 'steam' ? <SteamReviewsPanel steamAppId={data.steam_app_id} gameTitle={data.title}/> : catalogId ? <VaultReviewsPanel key={catalogId} catalogId={catalogId} refreshKey={reviewVersion}/> : <p className="steam-review-state">Reviews will appear once the game details have loaded.</p>}
+      </section>
     </section>
   </div>
 }

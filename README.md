@@ -20,8 +20,8 @@ The RetroVault brand uses the supplied pixel-art vault logo in [`public/retrovau
 - **Personal collection:** add manually, track a status, set a 1–10 rating, favorite a title, edit notes, or remove it from your collection.
 - **Collection views:** poster grid or compact list, search and status filters, completion totals, backlog size and Steam playtime.
 - **Paged library:** 24 games per page, with page controls that follow the active search and status filters.
-- **Game dossiers and artwork:** inspect descriptions, platforms, release details, Metacritic, RAWG community ratings, developer/publisher, screenshots and store links. Open screenshots in an in-site theater viewer with next/previous navigation and keyboard controls. RAWG enriches cross-platform catalog matches when its key is configured; GameDB/IGDB remains available for discovery, and SteamGridDB provides community grids, heroes and logos.
-- **Player reviews:** write a 1-10 rating and text review for any game in your collection. The Reviews page includes public RetroVault reviews with game and rating filters, plus English Steam community reviews for owned Steam games. Sort Steam reviews by helpfulness, newest, or recently updated and filter positive or negative recommendations.
+- **Game dossiers and artwork:** descriptions, platforms, release details, Metacritic, RAWG ratings, developer/publisher and screenshots appear first, followed by personal actions and community reviews. Open screenshots in an in-site theater viewer with next/previous navigation and keyboard controls. Existing covers survive RAWG enrichment; affected GameDB entries recover their original IGDB covers on opening. Landscape artwork keeps its aspect ratio. RAWG, GameDB/IGDB, and SteamGridDB supply metadata and artwork when available.
+- **Player reviews:** write a 1–10 rating and text review for any game in your collection, or use **Add & write review** from a catalog dossier. Both Steam and RetroVault reviews show **5 per page**, with **Read more / Show less** for long text. Steam reviews are English and sortable by helpfulness, newest, or recently updated, with positive/negative filters. RetroVault reviews have rating filters and newest/highest/lowest sorting. Its pagination counts only public reviews and the current player's own reviews. The Reviews page also lets you choose a game.
 - **Achievements:** inspect unlocked and locked achievements for a selected synced Steam game, or connect a RetroAchievements username to browse classic game progress and unlock dates. Steam uses [ISteamUserStats](https://partner.steamgames.com/doc/webapi/ISteamUserStats); classic game progress comes from the [RetroAchievements Web API](https://api-docs.retroachievements.org/). Details load on demand and are cached by the API; the RetroAchievements key stays server-side.
 - **VGUI interface:** ten skins: VGUI Olive, Source Obsidian, HEV Hazard, LAN Party 98, Aperture After Hours (Portal), RED Industries and BLU Engineering (TF2), Safe Room (Left 4 Dead), Dust & Steel (Counter-Strike), and Ancient Ember (Dota 2). Profile preview cards apply a skin across the sidebar and all new pages. Choosing a preset clears custom overrides; Settings also offers custom background, panel, accent and text colors. These are fan-made palettes, not official Valve artwork.
 - **Activity:** a chronological feed of playtime increases recorded during sync.
@@ -190,11 +190,12 @@ Private routes require the signed Steam session cookie unless noted.
 | `GET` | `/api/catalog/search?q=...` | Merges RetroVault, GameDB, and configured RAWG title suggestions. |
 | `GET` | `/api/catalog/discover?platform=...&genre=...&page=...` | Recommends games by platform or genre while excluding titles already in the caller's library. |
 | `GET` | `/api/reviews?limit=...` | Returns recent reviews from public profiles and the caller's own reviews. |
-| `GET` | `/api/catalog/:catalogId/reviews` | Returns reviews for a title, respecting each profile's public/private setting. |
+| `GET` | `/api/catalog/:catalogId/reviews?page=1&sort=recent&rating=all` | Five reviews per page, totals and page count. Sort: recent/highest/lowest. Rating: all/positive/mixed/negative/unrated. Visibility is enforced before paging. |
+| `GET` | `/api/reviews/page?page=1&sort=recent&rating=all` | The same paged public/own review feed across games; optional `catalog_id` filter. |
 | `GET` | `/api/catalog/:catalogId/details` | Loads details and artwork for a catalog game before it is added to a user's collection. |
 | `GET` | `/api/store/steam?category=top_sellers\|most_played\|new_releases\|specials` | Returns the selected Steam storefront shelf, including Romanian prices and the current player chart. |
 | `POST` | `/api/store/steam/:steamAppId/catalog` | Loads a Steam product into the shared catalog so it can be viewed or added to Backlog. |
-| `GET` | `/api/steam/reviews/:steamAppId?sort=helpful&sentiment=all` | Loads English Steam reviews, sortable by helpfulness, recency, or last update and filterable by sentiment. |
+| `GET` | `/api/steam/reviews/:steamAppId?sort=helpful&sentiment=all&cursor=*` | Five English Steam reviews per page through IUserReviewsService. Returns `next_cursor` and matching count; URL-encode the cursor for the next request. Sort: helpful/recent/updated; sentiment: all/positive/negative. Cached 15 minutes. |
 | `GET` | `/api/steam/library` | Imports visible Steam games, writes playtime deltas and performs bounded Steam Store enrichment. |
 | `GET` | `/api/activity?limit=100` | Lists recent playtime delta records. |
 | `GET` | `/api/public/profiles/:steamId` | Public profile summary and collection; only available after the owner opts in. |
@@ -234,3 +235,7 @@ Run the Express API and built Vite frontend behind one HTTPS origin, proxy `/api
 | `npm run build` | Builds the frontend into `dist/`. |
 | `npm run preview` | Previews the Vite production build. |
 | `npm run lint` | Runs ESLint. |
+
+## Coding agent skills
+
+The installed skills, pinned upstream sources, custom workflows, and CLI/authentication status are documented in [docs/agent-skills.md](docs/agent-skills.md). Custom skill sources are maintained in `tooling/skills/`; they are development aids and are not shipped in the website bundle.

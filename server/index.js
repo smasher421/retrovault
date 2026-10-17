@@ -5,7 +5,7 @@ import { THEMES } from '../shared/themes.js'
 import { registerGogRoutes } from './gog.js'
 import {
   addCatalogGame, deleteUserGame, getCatalogGameForUser, getLanMatches, getPublicProfileSummary, getSteamCatalogNeedingEnrichment,
-  getCatalogDiscover, getCatalogGameById, getReviewsFeed, getUserGames, getUserPlayLogs, getUserProfile, searchCatalog, supabase, syncSteamGames,
+  getCatalogDiscover, getCatalogGameById, getReviewsFeed, getReviewsPage, getUserGames, getUserPlayLogs, getUserProfile, searchCatalog, supabase, syncSteamGames,
   updateCatalogDetails, updateSteamCatalogMetadata, updateUserGame, updateUserGameStatus, updateUserProfile, upsertSteamProfile,
 } from './supabase.js'
 
@@ -342,23 +342,28 @@ const fetchSteamGridDBArtworkByName = async (title) => {
 }
 
 const steamReviewCache = new Map()
-const fetchSteamCommunityReviews = async (steamAppId, { sort = 'helpful', sentiment = 'all' } = {}) => {
-  const cacheKey = `${steamAppId}:${sort}:${sentiment}`
+const fetchSteamCommunityReviews = async (steamAppId, { sort = 'helpful', sentiment = 'all', cursor = '*' } = {}) => {
+  const cacheKey = JSON.stringify([steamAppId, sort, sentiment, cursor])
   const cached = steamReviewCache.get(cacheKey)
   if (cached?.expiresAt > Date.now()) return cached.data
-  const params = new URLSearchParams({
-    json: '1', language: 'english', review_type: sentiment, purchase_type: 'all',
-    num_per_page: '20', filter: sort === 'helpful' ? 'all' : sort,
-  })
-  if (sort === 'helpful') params.set('day_range', '365')
-  const response = await fetch(`https://store.steampowered.com/appreviews/${steamAppId}?${params}`, { signal: AbortSignal.timeout(9000) })
+  // Steam's service API replaces /appreviews; the cursor is opaque and must be encoded.
+  const params = new URLSearchParams({ input_json: JSON.stringify({
+    appid: Number(steamAppId), languages: ['english'], purchase_type: 1,
+    review_type: { all: 0, positive: 1, negative: 2 }[sentiment],
+    filter: { helpful: 0, recent: 1, updated: 2 }[sort],
+    num_per_page: 5, cursor, day_range: 0, use_review_quality: true,
+  }) })
+  const response = await fetch(`https://api.steampowered.com/IUserReviewsService/GetAppReviews/v1/?${params}`, { signal: AbortSignal.timeout(9000) })
   if (!response.ok) throw new Error(`Steam reviews failed (${response.status}).`)
-  const body = await response.json()
+  const payload = await response.json()
+  const body = payload.response || payload
+  if (!Array.isArray(body.reviews)) throw new Error('Steam returned incomplete reviews. Please try again.')
   const result = {
-    total_reviews: Number(body.query_summary?.total_reviews) || 0,
+    total_reviews: body.total_matching != null ? Number(body.total_matching) : null,
+    next_cursor: body.reviews.length && body.cursor && body.cursor !== cursor ? body.cursor : null,
     reviews: (body.reviews || []).map((review) => ({
       review_id: review.recommendationid,
-      author: review.author?.steamid ? `Steam player ${review.author.steamid.slice(-5)}` : 'Steam player',
+      author: review.author?.steamid ? `Steam player ${String(review.author.steamid).slice(-5)}` : 'Steam player',
       text: review.review,
       recommended: Boolean(review.voted_up),
       helpful: Number(review.votes_up) || 0,
@@ -368,7 +373,7 @@ const fetchSteamCommunityReviews = async (steamAppId, { sort = 'helpful', sentim
       language: 'English',
       created_at: review.timestamp_created ? new Date(review.timestamp_created * 1000).toISOString() : null,
       source: 'Steam',
-    })).filter((review) => review.text).slice(0, 20),
+    })).filter((review) => review.text),
   }
   steamReviewCache.set(cacheKey, { data: result, expiresAt: Date.now() + 15 * 60 * 1000 })
   if (steamReviewCache.size > 400) steamReviewCache.delete(steamReviewCache.keys().next().value)
@@ -389,7 +394,8 @@ const enrichCatalogFromRawg = async (cached, rawgId) => {
   const metadata = {
     ...catalog,
     rawg_id: Number(rawgId),
-    cover_url: catalog.cover_url || cached.cover_url,
+    // RAWG background_image is landscape artwork, not a replacement for a box cover.
+    cover_url: cached.cover_url || catalog.cover_url,
     backdrop_url: catalog.backdrop_url || cached.backdrop_url,
     metacritic_score: catalog.metacritic_score ?? cached.metacritic_score,
     metacritic_url: catalog.metacritic_url || cached.metacritic_url,
@@ -408,6 +414,13 @@ const enrichCatalogFromRawg = async (cached, rawgId) => {
 }
 
 const enrichCatalogDetails = async (cached) => {
+  // Repair covers overwritten by older RAWG enrichment, including already fresh rows.
+  if (cached.igdb_id && (!cached.cover_url || /\/media\.rawg\.io\//i.test(cached.cover_url))) {
+    try {
+      const original = await fetchGameDbDetails(cached.igdb_id)
+      if (original.cover_url) cached = await updateCatalogDetails(cached.id, { cover_url: original.cover_url }) || { ...cached, cover_url: original.cover_url }
+    } catch (error) { console.warn(`Original cover unavailable for ${cached.title}:`, error.message) }
+  }
   const fresh = cached.details_updated_at && Date.now() - new Date(cached.details_updated_at).getTime() < 30 * 24 * 60 * 60 * 1000
   const noArtwork = !cached.artwork_grid_url && !cached.cover_url && !cached.backdrop_url
   if (cached.rawg_id && process.env.RAWG_API_KEY) {
@@ -680,11 +693,19 @@ app.get('/api/reviews', requireUser, async (req, res) => {
   try { res.json(await getReviewsFeed(req.userId, { limit: Math.min(Number(req.query.limit) || 40, 100) })) }
   catch (error) { res.status(500).json({ message: error.message }) }
 })
-app.get('/api/catalog/:catalogId/reviews', requireUser, async (req, res) => {
-  if (!/^\d+$/.test(req.params.catalogId)) return res.status(400).json({ message: 'Invalid catalog ID.' })
-  try { res.json(await getReviewsFeed(req.userId, { catalogId: Number(req.params.catalogId), limit: 100 })) }
+const sendReviewsPage = async (req, res) => {
+  const catalogId = req.params.catalogId || req.query.catalog_id
+  const page = Number(req.query.page || 1)
+  const sort = String(req.query.sort || 'recent')
+  const rating = String(req.query.rating || 'all')
+  if (catalogId && !/^\d+$/.test(catalogId)) return res.status(400).json({ message: 'Invalid catalog ID.' })
+  if (!Number.isSafeInteger(page) || page < 1 || page > 10000) return res.status(400).json({ message: 'Invalid review page.' })
+  if (!['recent', 'highest', 'lowest'].includes(sort) || !['all', 'positive', 'mixed', 'negative', 'unrated'].includes(rating)) return res.status(400).json({ message: 'Invalid review filter.' })
+  try { res.json(await getReviewsPage(req.userId, { catalogId: catalogId ? Number(catalogId) : undefined, page, sort, rating })) }
   catch (error) { res.status(500).json({ message: error.message }) }
-})
+}
+app.get('/api/reviews/page', requireUser, sendReviewsPage)
+app.get('/api/catalog/:catalogId/reviews', requireUser, sendReviewsPage)
 app.get('/api/store/steam', requireUser, async (req, res) => {
   const category = String(req.query.category || 'top_sellers')
   if (!['top_sellers', 'most_played', 'new_releases', 'specials'].includes(category)) return res.status(400).json({ message: 'Choose a valid Steam store shelf.' })
@@ -840,7 +861,7 @@ const fetchGameDbDetails = async (igdbId) => {
     } catch { return null }
   }))).filter(Boolean)
   const genres = Array.isArray(item.genres) ? item.genres.map((genre) => typeof genre === 'string' ? genre : genre.name).filter(Boolean) : []
-  const cover = item.cover?.url ? item.cover.url.replace('//images.igdb.com/', 'https://images.igdb.com/').replace('t_thumb', 't_cover_big') : null
+  const cover = item.cover?.url ? item.cover.url.replace(/^\/\//, 'https://').replace('t_thumb', 't_cover_big') : null
   const releaseYear = item.first_release_date
     ? new Date((typeof item.first_release_date === 'number' ? item.first_release_date * 1000 : item.first_release_date)).getUTCFullYear()
     : item.release_dates?.map((release) => release.y || (release.date ? new Date(release.date * 1000).getUTCFullYear() : null)).filter(Boolean).sort((a, b) => a - b)[0] || null
@@ -982,9 +1003,11 @@ app.get('/api/steam/reviews/:steamAppId', requireUser, async (req, res) => {
   if (!/^\d{1,10}$/.test(req.params.steamAppId)) return res.status(400).json({ message: 'Invalid Steam app ID.' })
   const sort = String(req.query.sort || 'helpful')
   const sentiment = String(req.query.sentiment || 'all')
+  const cursor = req.query.cursor ?? '*'
   if (!['helpful', 'recent', 'updated'].includes(sort)) return res.status(400).json({ message: 'Choose helpful, recent, or updated review order.' })
   if (!['all', 'positive', 'negative'].includes(sentiment)) return res.status(400).json({ message: 'Choose all, positive, or negative Steam reviews.' })
-  try { res.json(await fetchSteamCommunityReviews(req.params.steamAppId, { sort, sentiment })) }
+  if (typeof cursor !== 'string' || cursor.length > 4096 || !cursor) return res.status(400).json({ message: 'Invalid review cursor.' })
+  try { res.json(await fetchSteamCommunityReviews(req.params.steamAppId, { sort, sentiment, cursor })) }
   catch (error) { res.status(502).json({ message: error.message || 'Steam reviews are unavailable right now.' }) }
 })
 app.get('/api/steam/library', requireUser, async (req, res) => {

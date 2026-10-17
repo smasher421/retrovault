@@ -203,6 +203,32 @@ export const getReviewsFeed = async (userId, { catalogId, limit = 40 } = {}) => 
     })).filter((review) => review.game).slice(0, Math.min(Math.max(limit, 1), 100))
 }
 
+export const getReviewsPage = async (userId, { catalogId, page = 1, sort = 'recent', rating = 'all' } = {}) => {
+  if (!supabase) throw new Error('Supabase server configuration is missing')
+  const pageSize = 5
+  let request = supabase.from('user_games').select(`
+    id,user_id,catalog_id,rating,review_text,updated_at,
+    author:profiles!inner(username,avatar_url),
+    game:games_catalog!inner(id,title,cover_url,backdrop_url,artwork_grid_url)
+  `, { count: 'exact' })
+    .not('review_text', 'is', null).neq('review_text', '')
+    // Apply visibility before counting/paging, including the viewer's private review.
+    .or(`is_public.eq.true,steam_id.eq.${userId}`, { referencedTable: 'author' })
+  if (catalogId) request = request.eq('catalog_id', catalogId)
+  if (rating === 'positive') request = request.gte('rating', 7)
+  if (rating === 'mixed') request = request.gte('rating', 4).lte('rating', 6)
+  if (rating === 'negative') request = request.lte('rating', 3)
+  if (rating === 'unrated') request = request.is('rating', null)
+  if (sort !== 'recent') request = request.order('rating', { ascending: sort === 'lowest', nullsFirst: false })
+  const { data, count, error } = await request.order('updated_at', { ascending: false }).order('id')
+    .range((page - 1) * pageSize, page * pageSize - 1)
+  if (error) throw error
+  return {
+    reviews: (data || []).map((review) => ({ ...review, is_mine: review.user_id === userId })),
+    total: count || 0, page, page_size: pageSize, total_pages: Math.ceil((count || 0) / pageSize),
+  }
+}
+
 export const upsertCatalogRows = async (rows, conflict = 'catalog_key') => {
   if (!supabase || rows.length === 0) return []
   const { data, error } = await supabase.from('games_catalog').upsert(rows, { onConflict: conflict }).select()

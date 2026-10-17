@@ -1,0 +1,35 @@
+/* Game information, personal actions, then community opinions. All surfaces follow the selected skin. */
+.details-dialog .details-header { background: var(--custom-panel); }
+.details-dialog .details-cover { min-height: 0; background: var(--custom-bg); }
+.details-dialog .details-cover > img:not(.details-logo) { width: 100%; height: auto; max-height: none; object-fit: contain; }
+.details-dialog .details-cover > .poster-fallback { aspect-ratio: 2 / 3; height: auto; }
+.details-dialog .detail-summary { color: var(--custom-text); }
+.details-dialog .detail-chips > span { background: var(--custom-bg); color: var(--custom-text); }
+.details-your-game { padding: 18px; border-block: 1px solid var(--border); background: color-mix(in srgb, var(--custom-accent) 5%, var(--custom-panel)); }
+.details-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.details-actions h3, .details-community-heading h3 { margin: 4px 0; font-size: 16px; }
+.details-actions small, .details-community-heading small { color: var(--muted); font: 10px Consolas, monospace; letter-spacing: .08em; }
+.details-actions p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+.details-action-buttons, .review-source-picker { display: flex; gap: 8px; flex-wrap: wrap; }
+.details-action-buttons { flex-shrink: 0; }
+.details-your-game .review-editor { margin: 16px 0 0; background: var(--custom-panel); }
+.details-community { padding-block: 18px 6px; }
+.details-community-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-inline: 18px; }
+.review-source-picker [aria-pressed="true"] { color: var(--custom-accent); border-color: var(--custom-accent); background: var(--custom-bg); }
+.steam-reviews-panel h2, .review-body { scroll-margin-top: 100px; }
+.review-body p { margin: 8px 0; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 12px; line-height: 1.65; }
+.review-expand { padding: 4px 0; background: none; border: 0; color: var(--custom-accent); cursor: pointer; font-size: 11px; text-decoration: underline; text-underline-offset: 3px; }
+.review-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.review-pagination > span { color: var(--muted); font: 11px Consolas, monospace; }
+.vault-reviews-panel .community-review-author { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.vault-reviews-panel .community-review-author small { color: var(--muted); }
+.vault-reviews-panel .steam-review-card h3 { margin: 0 0 10px; font-size: 15px; }
+.review-expand:focus-visible, .review-pagination button:focus-visible, .review-source-picker button:focus-visible { outline: 2px solid var(--custom-accent); outline-offset: 3px; }
+@media (max-width: 700px) {
+  .details-your-game { padding: 14px 12px; }
+  .details-actions, .details-community-heading { align-items: flex-start; flex-direction: column; }
+  .details-action-buttons { width: 100%; }
+  .details-action-buttons .button { flex: 1; }
+  .details-community-heading { padding-inline: 12px; }
+  .review-pagination { gap: 6px; }
+}

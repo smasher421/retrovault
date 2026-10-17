@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prompt Improver"
+  short_description: "Draft, refine, or shorten prompts without losing intent"
+  default_prompt: "Use $prompt-improver to improve this prompt in balanced mode."

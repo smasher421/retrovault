@@ -1,0 +1,4 @@
+interface:
+  display_name: "Research to Markdown"
+  short_description: "Build a cited research report with alternatives and gaps"
+  default_prompt: "Use $research-skill to research this question and save a Markdown report."

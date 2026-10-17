@@ -1,0 +1,4 @@
+interface:
+  display_name: "Apply My Tone"
+  short_description: "Rewrite text using an explicit personal tone profile"
+  default_prompt: "Use $tone-apply to rewrite this text using my current tone profile."
