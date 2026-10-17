@@ -1,0 +1,10 @@
+.env
+.env.*
+logs
+research
+tooling
+docs
+supabase/.temp
+.agents
+.firecrawl
+server/*.test.js

@@ -130,7 +130,7 @@ GOG does not provide this as a registered, supported RetroVault OAuth integratio
 - Product artwork, descriptions and screenshots come from GOG. Product metadata is reused for seven days; store offers cache for ten minutes. New store prices are never written into a player's historical purchase price.
 - Playtime comes from Galaxy's `time_sum`, in minutes. Games never tracked by Galaxy, private data, and unavailable endpoints may have **Playtime unavailable**. Missing statistics do not erase a previously recorded total. Last-played time is used only when a returned session supplies a date.
 - The initial total becomes a baseline, not a new lifetime-sized activity event. Later increases generate activity deltas. A partial failure reports counts and can be retried without duplicating collection entries.
-- Sync progress is held by the running Express process. Restarting the API interrupts a running job; start another sync to finish it. Completed batches remain saved. Run one API instance for this first version's job coordinator.
+- GOG sync checkpoints are stored in the private connection record. Each authenticated continuation request discovers one ownership page or imports up to six products, using a database compare-and-swap lease to prevent concurrent workers from processing the same batch. Keep RetroVault open while syncing; returning to the app resumes a pending sync after a restart or a different server instance. A failed request's lease expires after two minutes so it can be retried. Already imported batches remain saved.
 - Disconnect removes saved GOG access, while imported games and reviews stay in the vault. Steam remains the login method. GOG names are shown in the private profile/header; the existing public-profile identity remains Steam.
 
 ### Additional GOG API routes
@@ -223,7 +223,15 @@ Private routes require the signed Steam session cookie unless noted.
 
 ## Production deployment
 
-Run the Express API and built Vite frontend behind one HTTPS origin, proxy `/api/*` and `/auth/*` to Express, and set `APP_URL` and `NODE_ENV=production`. Put `SUPABASE_SERVICE_ROLE_KEY`, `STEAM_API_KEY` and `SESSION_SECRET` in the hosting provider's server secret store. Express currently exposes the API rather than serving `dist/`; configure the frontend static host or reverse proxy accordingly.
+The Vercel production site is [retrovault-eta.vercel.app](https://retrovault-eta.vercel.app). `vercel.json` builds the Vite frontend and sends `/api/*` and `/auth/*` through the shared Express function in `api/index.js`; other frontend routes load the SPA. The function uses Node.js 24 with a 300-second maximum duration. Importing the app does not open a TCP listener; `npm run server` still starts the local API.
+
+Set `APP_URL` to the canonical HTTPS domain in Vercel's **Production** environment so Steam OpenID returns to the same host that set its verification cookie. Use the canonical site URL when signing in. On Vercel, session and GOG connection-state cookies are `Secure`, `HttpOnly`, and `SameSite=Lax`. GOG connection state is an encrypted, user-bound cookie, so another server instance can validate the callback.
+
+Configure `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SESSION_SECRET`, and `STEAM_API_KEY` in Vercel, together with the optional RAWG, SteamGridDB, and RetroAchievements variables listed above. Keep the existing session/encryption secret stable so saved GOG credentials remain readable. These are server variables; do not prefix secrets with `VITE_`. Local `.env` files are excluded from uploads by `.vercelignore`, and the local Vercel link is ignored by Git. Vercel's project already holds the production secrets; changing an environment value requires a redeployment.
+
+From the project directory, authenticate using `npx vercel login`, link the existing `retrovault` project with `npx vercel link --yes --project retrovault`, and deploy with `npx vercel --prod`. On another hosting provider, serve `dist/` and proxy `/api/*` and `/auth/*` to the Express process behind the same HTTPS origin.
+
+The focused `npm run test:server` regression uses simulated providers and database responses to check GOG connection state across app instances, ownership pagination/deduplication, batch leases, partial failures, and the public response boundary. It does not log in to a real GOG account or change live data.
 
 ## NPM scripts
 

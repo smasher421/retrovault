@@ -67,7 +67,7 @@ function GogConnection({ gog, refresh, error, navigate }) {
     {message && <p role="alert">{message}</p>}
     {gog?.job?.status === 'error' && <p role="alert">{gog.job.message}</p>}
     {gog?.job?.status === 'complete' && <p role="status">{gog.job.message}</p>}
-    {running && <div className="sync-progress" role="status"><progress max={gog.job.total || 1} value={gog.job.processed}/><span>Syncing GOG… {gog.job.processed} / {gog.job.total || '…'} games. You can keep browsing.</span></div>}
+    {running && <div className="sync-progress" role="status"><progress max={gog.job.total || 1} value={gog.job.processed}/><span>Syncing GOG… {gog.job.processed} / {gog.job.total || '…'} games. Keep RetroVault open; you can keep browsing. Sync resumes when you return.</span></div>}
     {gog?.connected && <p className="muted-copy">{gog.summary?.imported ?? '—'} games imported · {gog.summary?.stats_unavailable ?? '—'} without reported playtime. Only time tracked by GOG is available.</p>}
     <div className="heading-actions">
       {gog?.connected && <button className="button primary" disabled={busy || running} onClick={() => act(async () => { await gogRequest('/sync', { method: 'POST' }); await refresh() })}>↻ Sync GOG library</button>}

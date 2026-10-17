@@ -6,8 +6,8 @@ import { supabase } from './supabase.js'
 const CLIENT_ID = process.env.GOG_CLIENT_ID || '46899977096215655'
 const CLIENT_SECRET = process.env.GOG_CLIENT_SECRET || '9d85c43b1482497dbbce61f6e4aa173a433796eeae2ca8c5f6129f2dc4de46d9'
 const REDIRECT = 'https://embed.gog.com/on_login_success?origin=client'
-const attempts = new Map()
-const jobs = new Map()
+const attemptCookie = 'retrovault_gog_attempt'
+const attemptOptions = () => ({ httpOnly: true, secure: process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL), sameSite: 'lax', path: '/api/accounts/gog', maxAge: 10 * 60000 })
 const storeCache = new Map()
 const products = new Map()
 const safeImage = (url) => typeof url === 'string' ? (url.startsWith('//') ? `https:${url}` : url).replace('{formatter}', 'ggvgl_2x') : ''
@@ -52,7 +52,18 @@ async function exchange(params) {
   return { ...tokens, expires_at: Date.now() + Math.max(0, Number(tokens.expires_in) || 0) * 1000 }
 }
 const connection = async (userId) => unwrap(await supabase.from('gog_connections').select('*').eq('user_id', userId).maybeSingle())
-const publicConnection = (row) => row ? { connected: true, username: row.username, avatar_url: row.avatar_url, connected_at: row.connected_at, last_synced_at: row.last_synced_at, summary: row.sync_summary } : { connected: false }
+const publicConnection = (row) => row ? { connected: true, username: row.username, avatar_url: row.avatar_url, connected_at: row.connected_at, last_synced_at: row.last_synced_at, summary: Object.fromEntries(Object.entries(row.sync_summary || {}).filter(([key]) => key !== '_sync')) } : { connected: false }
+const publicJob = (job) => job ? Object.fromEntries(['status', 'total', 'processed', 'imported', 'failed', 'skipped', 'statsUnavailable', 'started_at', 'message', 'resumable'].map((key) => [key, job[key]])) : null
+const runningJob = (row) => row?.sync_summary?._sync?.status === 'running'
+function readAttempt(req) {
+  const cookie = req.headers.cookie?.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${attemptCookie}=`))
+  try { return cookie ? decrypt(req.userId, decodeURIComponent(cookie.slice(attemptCookie.length + 1))) : null } catch { return null }
+}
+// Compare-and-swap also acts as a lease across concurrent Vercel instances.
+async function saveSync(row, previous, summary, completed = false) {
+  return unwrap(await supabase.from('gog_connections').update({ sync_summary: summary, ...(completed ? { last_synced_at: new Date().toISOString() } : {}) })
+    .eq('user_id', row.user_id).eq('gog_user_id', row.gog_user_id).eq('sync_summary', JSON.stringify(previous)).select('sync_summary').maybeSingle())
+}
 
 async function credentials(userId) {
   const row = await connection(userId)
@@ -122,34 +133,8 @@ async function catalogGame(id) {
   return unwrap(await supabase.from('games_catalog').upsert(row, { onConflict: 'gog_product_id' }).select().single())
 }
 
-async function library(tokens) {
-  const games = new Set()
-  const pages = new Set()
-  let next = ''
-  do {
-    const url = new URL(`https://galaxy-library.gog.com/users/${tokens.user_id}/releases`)
-    if (next) url.searchParams.set('page_token', next)
-    const result = await json(url, tokens.access_token)
-    if (!Array.isArray(result.items)) throw new Error('GOG did not return a complete library. Your saved games are unchanged.')
-    for (const game of result.items) if (game.platform_id === 'gog' && game.owned !== false && validId(game.external_id)) games.add(String(game.external_id))
-    next = result.next_page_token || ''
-    if (next && pages.has(next)) throw new Error('GOG library pagination stalled. Please sync again later.')
-    pages.add(next)
-    if (pages.size > 500) throw new Error('GOG library is too large for a single sync.')
-  } while (next)
-  return [...games]
-}
-
-async function syncLibrary(userId, job) {
-  let { row, tokens } = await credentials(userId)
-  const identity = await json(`https://users.gog.com/users/${tokens.user_id}`, tokens.access_token)
-  if (!identity.username) throw new Error('GOG did not return your profile. Reconnect and try again.')
-  unwrap(await supabase.from('gog_connections').update({ username: identity.username, avatar_url: safeImage(identity.avatar?.large_2x || identity.avatar?.large) }).eq('user_id', userId))
-  const ids = await library(tokens)
-  job.total = ids.length
-  for (let offset = 0; offset < ids.length; offset += 6) {
-    if (tokens.expires_at < Date.now() + 60000) ({ row, tokens } = await credentials(userId))
-    const batch = await Promise.all(ids.slice(offset, offset + 6).map(async (id) => {
+async function importBatch(userId, row, tokens, ids, job) {
+  const batch = await Promise.all(ids.map(async (id) => {
       let game
       try {
         const existing = unwrap(await supabase.from('games_catalog').select('id,metadata_updated_at').eq('gog_product_id', Number(id)).maybeSingle())
@@ -168,14 +153,56 @@ async function syncLibrary(userId, job) {
       if (minutes === null) job.statsUnavailable += 1
       return { catalog_id: game.id, playtime_minutes: minutes, last_played_at: lastPlayed }
     }))
-    const rows = batch.filter(Boolean)
-    if (rows.length) job.imported += unwrap(await supabase.rpc('sync_gog_library', { p_user_id: userId, p_gog_user_id: row.gog_user_id, p_games: rows })) || 0
-    job.processed = Math.min(offset + 6, ids.length)
-  }
-  const summary = { owned: ids.length, imported: job.imported, failed: job.failed, skipped: job.skipped, stats_unavailable: job.statsUnavailable }
-  unwrap(await supabase.from('gog_connections').update({ last_synced_at: new Date().toISOString(), sync_summary: summary }).eq('user_id', userId))
-  job.status = 'complete'
-  job.message = `${job.imported} GOG games synced.${job.failed ? ` ${job.failed} could not be loaded; sync again to retry.` : ''}${job.statsUnavailable ? ` Playtime unavailable for ${job.statsUnavailable} games.` : ''}`
+  const rows = batch.filter(Boolean)
+  if (rows.length) job.imported += unwrap(await supabase.rpc('sync_gog_library', { p_user_id: userId, p_gog_user_id: row.gog_user_id, p_games: rows })) || 0
+}
+
+async function advanceSync(userId) {
+  const row = await connection(userId)
+  const previous = row?.sync_summary || {}
+  const current = previous._sync
+  if (!current || current.status !== 'running' || current.lease_until > Date.now()) return publicJob(current)
+  const job = { ...current, lease_until: Date.now() + 120000 }
+  const claimed = { ...previous, _sync: { ...job } }
+  if (!await saveSync(row, previous, claimed)) return publicJob((await connection(userId))?.sync_summary?._sync)
+  try {
+    const { row: credentialRow, tokens } = await credentials(userId)
+    if (credentialRow.gog_user_id !== row.gog_user_id) throw new Error('GOG account changed. Reconnect before syncing.')
+    if (job.phase === 'library') {
+      if (!job.pages.length) {
+        const identity = await json(`https://users.gog.com/users/${tokens.user_id}`, tokens.access_token)
+        if (!identity.username) throw new Error('GOG did not return your profile. Reconnect and try again.')
+        unwrap(await supabase.from('gog_connections').update({ username: identity.username, avatar_url: safeImage(identity.avatar?.large_2x || identity.avatar?.large) }).eq('user_id', userId).eq('gog_user_id', row.gog_user_id))
+      }
+      const url = new URL(`https://galaxy-library.gog.com/users/${tokens.user_id}/releases`)
+      if (job.next_page) url.searchParams.set('page_token', job.next_page)
+      const result = await json(url, tokens.access_token)
+      if (!Array.isArray(result.items)) throw new Error('GOG did not return a complete library. Please retry the sync.')
+      const ids = new Set(job.ids)
+      for (const game of result.items) if (game.platform_id === 'gog' && game.owned !== false && validId(game.external_id)) ids.add(String(game.external_id))
+      job.ids = [...ids]; job.total = ids.size
+      const next = result.next_page_token || ''
+      if (next && job.pages.includes(next)) throw new Error('GOG library pagination stalled. Please retry later.')
+      if (job.pages.length >= 500) throw new Error('GOG library is too large for this sync.')
+      job.next_page = next
+      if (next) job.pages = [...job.pages, next]
+      else job.phase = 'games'
+    } else {
+      const ids = job.ids.slice(job.processed, job.processed + 6)
+      await importBatch(userId, row, tokens, ids, job)
+      job.processed += ids.length
+      if (job.processed >= job.total) {
+        job.status = 'complete'
+        job.message = `${job.imported} GOG games synced.${job.failed ? ` ${job.failed} could not be loaded; sync again to retry.` : ''}${job.statsUnavailable ? ` Playtime unavailable for ${job.statsUnavailable} games.` : ''}`
+        job.ids = []; job.pages = []; job.next_page = ''
+      }
+    }
+  } catch (error) { job.status = 'error'; job.message = error.message }
+  job.lease_until = 0
+  const summary = { ...previous, _sync: job }
+  if (job.status === 'complete') Object.assign(summary, { owned: job.total, imported: job.imported, failed: job.failed, skipped: job.skipped, stats_unavailable: job.statsUnavailable })
+  if (!await saveSync(row, claimed, summary, job.status === 'complete')) return publicJob((await connection(userId))?.sync_summary?._sync)
+  return publicJob(job)
 }
 
 export function registerGogRoutes(app, requireUser, appOrigin) {
@@ -202,47 +229,49 @@ export function registerGogRoutes(app, requireUser, appOrigin) {
     res.json(game)
   }))
   app.get('/api/accounts/gog', requireUser, route(async (req, res) => {
-    res.set('Cache-Control', 'no-store').json({ ...publicConnection(await connection(req.userId)), job: jobs.get(req.userId) || null })
+    const row = await connection(req.userId)
+    res.set('Cache-Control', 'no-store').json({ ...publicConnection(row), job: publicJob(row?.sync_summary?._sync) })
   }))
   app.post('/api/accounts/gog/start', requireUser, mutate, route(async (req, res) => {
-    if (jobs.get(req.userId)?.status === 'running') return res.status(409).json({ message: 'Wait for the current GOG sync to finish.' })
+    if (runningJob(await connection(req.userId))) return res.status(409).json({ message: 'Wait for the current GOG sync to finish.' })
     encryptionKey()
-    for (const [id, attempt] of attempts) if (attempt.expires < Date.now()) attempts.delete(id)
     const state = crypto.randomBytes(32).toString('base64url')
-    attempts.set(req.userId, { state, expires: Date.now() + 10 * 60000 })
+    res.cookie(attemptCookie, encrypt(req.userId, { state, expires: Date.now() + 10 * 60000 }), attemptOptions())
     const url = new URL('https://auth.gog.com/auth')
     url.search = new URLSearchParams({ client_id: CLIENT_ID, redirect_uri: REDIRECT, response_type: 'code', layout: 'client2', state })
     res.set('Cache-Control', 'no-store').json({ url: url.toString(), state })
   }))
   app.post('/api/accounts/gog/connect', requireUser, mutate, route(async (req, res) => {
-    const attempt = attempts.get(req.userId)
+    const attempt = readAttempt(req)
     if (!attempt || attempt.expires < Date.now() || attempt.state !== req.body.state) return res.status(400).json({ message: 'The connection window expired. Start Connect GOG again.' })
     let callback
     try { callback = new URL(String(req.body.callback || '').trim()) } catch { return res.status(400).json({ message: 'Paste the full GOG success URL from the address bar.' }) }
     const code = callback.searchParams.get('code')
     if (callback.origin !== 'https://embed.gog.com' || callback.pathname !== '/on_login_success' || !code || code.length > 2048 || (callback.searchParams.has('state') && callback.searchParams.get('state') !== attempt.state)) return res.status(400).json({ message: 'Use the success URL from the GOG sign-in window you just opened.' })
-    if (jobs.get(req.userId)?.status === 'running') return res.status(409).json({ message: 'Wait for the current GOG sync to finish.' })
-    attempts.delete(req.userId)
+    if (runningJob(await connection(req.userId))) return res.status(409).json({ message: 'Wait for the current GOG sync to finish.' })
+    res.clearCookie(attemptCookie, { ...attemptOptions(), maxAge: undefined })
     const tokens = await exchange({ grant_type: 'authorization_code', redirect_uri: REDIRECT, code })
     const identity = await json(`https://users.gog.com/users/${tokens.user_id}`, tokens.access_token)
     if (!identity.username) throw new Error('GOG could not provide your account name.')
     const row = unwrap(await supabase.from('gog_connections').upsert({ user_id: req.userId, gog_user_id: String(tokens.user_id), username: identity.username, avatar_url: safeImage(identity.avatar?.large_2x || identity.avatar?.large), tokens_encrypted: encrypt(req.userId, tokens), connected_at: new Date().toISOString(), last_synced_at: null, sync_summary: {} }).select().single())
-    jobs.delete(req.userId)
     res.set('Cache-Control', 'no-store').json(publicConnection(row))
   }))
   app.post('/api/accounts/gog/sync', requireUser, mutate, route(async (req, res) => {
-    const current = jobs.get(req.userId)
-    if (current?.status === 'running') return res.status(202).json(current)
-    if (!await connection(req.userId)) return res.status(400).json({ message: 'Connect GOG before syncing.' })
-    const job = { status: 'running', total: 0, processed: 0, imported: 0, failed: 0, skipped: 0, statsUnavailable: 0, started_at: new Date().toISOString() }
-    jobs.set(req.userId, job)
-    void syncLibrary(req.userId, job).catch((error) => { job.status = 'error'; job.message = error.message })
-    res.status(202).json(job)
+    const row = await connection(req.userId)
+    if (!row) return res.status(400).json({ message: 'Connect GOG before syncing.' })
+    if (runningJob(row)) return res.status(202).json(publicJob(row.sync_summary._sync))
+    const job = { status: 'running', phase: 'library', total: 0, processed: 0, imported: 0, failed: 0, skipped: 0, statsUnavailable: 0, started_at: new Date().toISOString(), resumable: true, ids: [], pages: [], next_page: '', lease_until: 0 }
+    const saved = await saveSync(row, row.sync_summary, { ...row.sync_summary, _sync: job })
+    if (!saved) return res.status(409).json({ message: 'The GOG connection changed. Refresh and try again.' })
+    res.status(202).json(publicJob(job))
+  }))
+  app.post('/api/accounts/gog/sync/continue', requireUser, mutate, route(async (req, res) => {
+    res.set('Cache-Control', 'no-store').json(await advanceSync(req.userId))
   }))
   app.delete('/api/accounts/gog', requireUser, mutate, route(async (req, res) => {
-    if (jobs.get(req.userId)?.status === 'running') return res.status(409).json({ message: 'Wait for the current sync before disconnecting GOG.' })
+    if (runningJob(await connection(req.userId))) return res.status(409).json({ message: 'Wait for the current sync before disconnecting GOG.' })
     unwrap(await supabase.from('gog_connections').delete().eq('user_id', req.userId))
-    attempts.delete(req.userId); jobs.delete(req.userId)
+    res.clearCookie(attemptCookie, { ...attemptOptions(), maxAge: undefined })
     res.json({ connected: false })
   }))
 }

@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import crypto from 'node:crypto'
+import { pathToFileURL } from 'node:url'
 import express from 'express'
 import { THEMES } from '../shared/themes.js'
 import { registerGogRoutes } from './gog.js'
@@ -45,7 +46,7 @@ const requireUser = (req, res, next) => {
 }
 const appOrigin = (req) => process.env.APP_URL || `${req.protocol}://${req.get('host')}`
 registerGogRoutes(app, requireUser, appOrigin)
-const cookieOptions = (path = '/') => ({ httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path, maxAge: 30 * 24 * 60 * 60 * 1000 })
+const cookieOptions = (path = '/') => ({ httpOnly: true, secure: process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL), sameSite: 'lax', path, maxAge: 30 * 24 * 60 * 60 * 1000 })
 const setSessionCookie = (res, steamId) => res.cookie(cookieName, makeSession(steamId), cookieOptions())
 const steamPlayer = async (steamId) => {
   if (!process.env.STEAM_API_KEY) return null
@@ -1019,10 +1020,12 @@ app.get('/api/steam/library', requireUser, async (req, res) => {
     const body = await response.json()
     if (!response.ok || body.response?.games === undefined) return res.status(422).json({ message: 'Steam returned no visible games. Set your Steam game details to Public and try again.' })
     const result = await syncSteamGames(req.userId, body.response.games)
-    res.json({ synced: result.imported, total: body.response.game_count ?? result.imported, playLogs: result.playLogs })
-    void getSteamCatalogNeedingEnrichment(body.response.games.slice(0, 12).map((game) => game.appid))
+    // Finish the bounded enrichment within the request on serverless deployments.
+    const enrichment = getSteamCatalogNeedingEnrichment(body.response.games.slice(0, 12).map((game) => game.appid))
       .then(fetchSteamStoreDetails)
       .catch((error) => console.warn('Steam catalog enrichment skipped:', error.message))
+    if (process.env.VERCEL) await enrichment
+    res.json({ synced: result.imported, total: body.response.game_count ?? result.imported, playLogs: result.playLogs })
   } catch (error) { res.status(500).json({ message: error.message || 'Steam library sync failed.' }) }
 })
 app.get('/api/activity', requireUser, async (req, res) => {
@@ -1055,4 +1058,8 @@ app.get('/api/badge/:steamId.svg', async (req, res) => {
   } catch (error) { res.status(500).send(error.message) }
 })
 
-app.listen(PORT, () => console.log(`RetroVault API listening on http://localhost:${PORT}`))
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  app.listen(PORT, () => console.log(`RetroVault API listening on http://localhost:${PORT}`))
+}
+
+export default app

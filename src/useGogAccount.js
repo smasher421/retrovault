@@ -12,9 +12,16 @@ export default function useGogAccount(userId, onSynced) {
   const [account, setAccount] = useState(null)
   const [error, setError] = useState('')
   const completedJob = useRef(null)
+  const refreshing = useRef(false)
   const refresh = useCallback(async () => {
+    if (refreshing.current) return null
+    refreshing.current = true
     try {
-      const next = await gogRequest()
+      let next = await gogRequest()
+      if (next.job?.status === 'running' && next.job.resumable) {
+        await gogRequest('/sync/continue', { method: 'POST' })
+        next = await gogRequest()
+      }
       if (next.job && next.job.status !== 'running' && completedJob.current !== next.job.started_at) {
         await onSynced()
         completedJob.current = next.job.started_at
@@ -22,6 +29,7 @@ export default function useGogAccount(userId, onSynced) {
       setAccount(next); setError('')
       return next
     } catch (failure) { setError(failure.message); return null }
+    finally { refreshing.current = false }
   }, [onSynced])
   useEffect(() => {
     if (!userId) return
