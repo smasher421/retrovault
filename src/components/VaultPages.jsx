@@ -14,14 +14,16 @@ export function HomePage({ profile, games, stats, navigate, openGame, Cover, gog
   const recent = [...games].filter((game) => game.last_played_at || game.status === 'Playing').sort((a, b) => (Date.parse(b.last_played_at) || 0) - (Date.parse(a.last_played_at) || 0)).slice(0, 4)
   const backlog = [...games].filter((game) => game.status === 'Backlog').sort((a, b) => (b.is_favorite - a.is_favorite) || (b.metacritic_score || b.rating_avg || 0) - (a.metacritic_score || a.rating_avg || 0)).slice(0, 4)
   return <div className="dashboard-page">
-    <section className="vgui-window home-hero"><div><small>HOME / YOUR NEXT SESSION STARTS HERE</small><h1>Welcome back, {profile?.username || 'player'}.</h1><p>One vault. Every era. Pick up a game, discover a classic, or plan what comes next.</p><div className="heading-actions"><button className="button primary" onClick={() => navigate('My Library')}>Open my library →</button><button className="button" onClick={() => navigate('Backlog Picks')}>Find something to play</button></div></div><img src="/retrovault-logo.png" alt="RetroVault — pixel-art vault" width="1254" height="1254"/></section>
+    <section className="vgui-window home-hero"><div><small>Your games</small><h1>Welcome back, {profile?.username || 'player'}.</h1><p>Pick up where you left off, discover a classic, or choose what to play next.</p><div className="heading-actions"><button className="button primary" onClick={() => navigate('My Library')}>Open my library</button><button className="button" onClick={() => navigate('Backlog Picks')}>Find something to play</button></div></div><img src="/retrovault-logo.png" alt="RetroVault — pixel-art vault" width="1254" height="1254"/></section>
     <section className="stats-grid">{[['GAMES IN YOUR VAULT', stats.total], ['COMPLETED', `${stats.completion}%`], ['RECORDED PLAYTIME', hours(stats.playtime)], ['WAITING IN BACKLOG', stats.backlog]].map(([label, value]) => <div className="vgui-window stat" key={label}><small>{label}</small><strong>{value}</strong></div>)}</section>
-    <div className="home-shortcuts">{[
-      ['Steam Store', 'S', 'What’s popular on Steam', 'Bestsellers, new releases, and live prices.'],
-      ['GOG Store', 'G', 'Good old games. New discoveries.', 'Classics, DRM-free releases, and current deals.'],
-      ['My Profile', '◉', 'Your player profile', gog?.connected ? `Steam + GOG · ${gog.username}` : 'Your stats, reviews, accounts, and Valve-inspired skins.'],
-      ['Achievements', '★', 'One more achievement', 'See your progress on Steam and RetroAchievements.'],
-    ].map(([target, mark, title, description]) => <button className="vgui-window home-shortcut" key={target} onClick={() => navigate(target)}><strong>{mark}</strong><span><b>{title}</b><small>{description}</small></span><i>›</i></button>)}</div>
+    <section className="vgui-window home-launcher" aria-labelledby="home-launcher-title"><h2 id="home-launcher-title">Explore RetroVault</h2><div className="home-command-list">{[
+      ['My Library', 'Play games', 'Open your Steam, GOG, and console collection.'],
+      ['Add Games', 'Add a game', 'Find a title from any platform and save it to your vault.'],
+      ['Steam Store', 'Steam Store', 'Browse new releases, popular games, and current deals.'],
+      ['GOG Store', 'GOG Store', 'Find classics, DRM-free releases, and special offers.'],
+      ['My Profile', 'Player profile', gog?.connected ? `Your stats and reviews · GOG: ${gog.username}` : 'Your stats, reviews, connected accounts, and themes.'],
+      ['Achievements', 'Achievements', 'See what you have unlocked and what is left to earn.'],
+    ].map(([target, label, description]) => <button className="home-command" key={target} onClick={() => navigate(target)}><span className="home-command-label">{label}</span><span className="home-command-description">{description}</span></button>)}</div></section>
     <GameStrip title="Continue your journey" games={recent} onOpen={openGame} Cover={Cover} empty="Sync your accounts or mark a game as Playing to see it here."/>
     <GameStrip title="Already in your backlog" games={backlog} onOpen={openGame} Cover={Cover} empty="Your next adventure is out there. Browse the stores or search for a game to add."/>
   </div>

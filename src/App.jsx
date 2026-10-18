@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { THEMES, THEME_VARIABLES } from '../shared/themes.js'
 import { HomePage, ProfilePage, ThemePicker } from './components/VaultPages.jsx'
 import GogStore from './components/GogStore.jsx'
+import GameActionsMenu from './components/GameActionsMenu.jsx'
 import StorePrice from './components/StorePrice.jsx'
 import { SteamReviewsPanel, VaultReviewsPanel } from './components/Reviews.jsx'
 import './game-details.css'
@@ -268,8 +269,9 @@ function App() {
   const [steamStoreRefresh, setSteamStoreRefresh] = useState(0)
   const [steamStoreActionId, setSteamStoreActionId] = useState(null)
   const [tab, setTab] = useState('Home')
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [collectionView, setCollectionView] = useState('My Library')
-  const [view, setView] = useState('grid')
+  const [view, setView] = useState('list')
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('All statuses')
   const [page, setPage] = useState(1)
@@ -291,6 +293,8 @@ function App() {
   const [matches, setMatches] = useState([])
   const [roulette, setRoulette] = useState(null)
   const [selectedGame, setSelectedGame] = useState(null)
+  const [gameMenu, setGameMenu] = useState(null)
+  const closeGameMenu = useCallback(() => setGameMenu(null), [])
   const detailsRequest = useRef(0)
   const closeDetails = () => { detailsRequest.current += 1; setSelectedGame(null) }
   const [gameDetails, setGameDetails] = useState(null)
@@ -501,6 +505,13 @@ function App() {
     if (!response.ok) return notifyError(response)
     setMatches(await response.json()); setMessage('LAN matches updated.')
   }
+  const showGameMenu = (event, game) => {
+    if (event.type === 'contextmenu' && event.target.closest('input, textarea, select, a')) return
+    event.preventDefault()
+    const rect = event.currentTarget.getBoundingClientRect()
+    const opener = event.currentTarget.querySelector('.game-menu-trigger') || event.currentTarget
+    setGameMenu({ game, x: event.type === 'contextmenu' ? event.clientX || rect.left + 8 : rect.left, y: event.type === 'contextmenu' ? event.clientY || rect.bottom : rect.bottom, opener })
+  }
   const spinBacklog = () => {
     const eligible = games.filter((game) => game.status === 'Backlog')
     setRoulette(eligible.length ? eligible[Math.floor(Math.random() * eligible.length)] : null)
@@ -590,12 +601,15 @@ function App() {
   const logout = async () => { await fetch('/api/auth/logout', { method: 'POST' }); setUser(null); setProfile(null); setGames([]); setLogs([]) }
 
   const steamDisplayName = !profile?.username || /^steam(?: user)?$/i.test(profile.username.trim()) ? `Steam ${user?.id || ''}` : profile.username
+  const activeVaultSection = tab === 'Library' ? collectionView : tab === 'Profile' ? 'My Profile' : tab === 'Social' ? 'People you follow' : tab
   const collectionTitle = collectionView === 'Reviews' ? 'Your Reviews'
     : collectionView === 'Wishlist' ? 'Wishlist'
       : collectionView === 'New Releases' ? 'Recent Releases in Your Vault'
         : collectionView === 'Top' ? 'Top Rated in Your Vault'
           : collectionView === 'Home' ? 'Home' : 'My Library'
   const chooseCategory = (category) => {
+    setMobileNavOpen(false)
+    closeGameMenu()
     window.scrollTo({ top: 0, behavior: 'instant' })
     setPage(1)
     setQuery('')
@@ -651,22 +665,22 @@ function App() {
   if (!user) return <main className="login-screen"><section className="vgui-window login-window"><header className="titlebar"><b>RetroVault 2.0</b><span>Steam Library System</span></header><div className="login-content"><img className="login-logo" src="/retrovault-logo.png" alt="RetroVault — pixel-art vault" width="1254" height="1254" fetchPriority="high"/><h1>Your games. Your story.</h1><p>Sign in with Steam to sync your library, track playtime, and build your personal vault.</p><a className="button primary" href="/auth/steam">Sign in through Steam</a><small>Steam game details must be public for library sync.</small></div></section></main>
 
   return <main className="app-shell">
-    <header className="vgui-window top-window"><div className="titlebar"><button className="brand-lockup brand-home" aria-label="RetroVault Home" onClick={() => chooseCategory('Home')}><img src="/retrovault-logo.png" alt="RetroVault" width="1254" height="1254" fetchPriority="high"/><span><strong>Home</strong><small>YOUR PERSONAL GAME VAULT</small></span></button><div className="account-chip">{profile?.avatar_url && <img src={profile.avatar_url} alt="" />}<button className="account-profile-button" onClick={() => chooseCategory('My Profile')}><b>{steamDisplayName}</b><small>{gogState.account?.connected ? `GOG · ${gogState.account.username}` : 'My profile'}</small></button><button className="button small" onClick={logout}>Log out</button></div></div>
+    <header className="vgui-window top-window"><div className="client-caption"><span aria-hidden="true">▣</span><b>RetroVault</b><span className="client-caption-description">Games library</span><button type="button" className="button small" onClick={() => chooseCategory('Settings')}>Settings</button></div><div className="titlebar"><button className="brand-lockup brand-home" aria-label="RetroVault Home" onClick={() => chooseCategory('Home')}><img src="/retrovault-logo.png" alt="RetroVault" width="1254" height="1254" fetchPriority="high"/><span><strong>{tab === 'Library' ? collectionTitle : tab === 'Profile' ? 'My Profile' : tab}</strong><small>Your personal game vault</small></span></button><div className="account-chip">{profile?.avatar_url && <img src={profile.avatar_url} alt="" />}<button className="account-profile-button" onClick={() => chooseCategory('My Profile')}><b>{steamDisplayName}</b><small>{gogState.account?.connected ? `GOG · ${gogState.account.username}` : 'My profile'}</small></button><button className="button small" onClick={logout}>Log out</button></div></div>
     </header>
 
     {message && <div className="notice" role="status"><span>{message}</span><button onClick={() => setMessage('')} aria-label="Dismiss">×</button></div>}
 
     <div className="app-workspace">
-      <aside className="category-sidebar" aria-label="RetroVault sections">
+      <aside className={`category-sidebar ${mobileNavOpen ? 'is-expanded' : ''}`} aria-label="RetroVault sections"><button type="button" className="sidebar-mobile-toggle" aria-expanded={mobileNavOpen} aria-controls="sidebar-navigation" onClick={() => setMobileNavOpen((value) => !value)}><b>Browse</b><span>{tab === 'Library' ? collectionTitle : tab === 'Profile' ? 'My Profile' : tab}</span><i aria-hidden="true">{mobileNavOpen ? '−' : '+'}</i></button><div className="sidebar-caption"><b>Browse</b><span>{games.length} games</span></div><div id="sidebar-navigation" className="sidebar-navigation">
         <button className="sidebar-profile" onClick={() => chooseCategory(steamDisplayName)}>{profile?.avatar_url && <img src={profile.avatar_url} alt=""/>}<span><b>{steamDisplayName}</b><small>{gogState.account?.connected ? `GOG · ${gogState.account.username}` : 'MY PLAYER PROFILE'}</small></span><i>›</i></button>
-        <section className="sidebar-group"><h2>YOUR VAULT</h2>{['Home', 'Reviews', 'My Profile', 'Wishlist', 'My Library', 'People you follow'].map((name, index) => <button key={`vault-${name}`} className={`sidebar-link ${(name === 'Home' && tab === 'Home') || (['My Library', 'Wishlist'].includes(name) && tab === 'Library' && collectionView === name) || (name === 'Reviews' && tab === 'Reviews') || (name === 'My Profile' && tab === 'Profile') || (name === 'People you follow' && tab === 'Social') ? 'active' : ''}`} onClick={() => chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">{['⌂', '▤', '◉', '☆', '▦', '♧'][index]}</span>{name}</button>)}<button className={`sidebar-link ${tab === 'Achievements' ? 'active' : ''}`} onClick={() => chooseCategory('Achievements')}><span className="sidebar-icon" aria-hidden="true">★</span>Achievements</button></section>
+        <section className="sidebar-group"><h2>YOUR VAULT</h2>{[['Home', '⌂'], ['My Library', '▦'], ['Add Games', '＋'], ['Wishlist', '☆'], ['Reviews', '▤'], ['My Profile', '◉'], ['People you follow', '♧']].map(([name, icon]) => <button key={`vault-${name}`} className={`sidebar-link ${activeVaultSection === name ? 'active' : ''}`} aria-current={activeVaultSection === name ? 'page' : undefined} onClick={() => chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">{icon}</span>{name}</button>)}<button className={`sidebar-link ${tab === 'Achievements' ? 'active' : ''}`} onClick={() => chooseCategory('Achievements')}><span className="sidebar-icon" aria-hidden="true">★</span>Achievements</button></section>
         <section className="sidebar-group"><h2>NEW RELEASES</h2><button className={`sidebar-link ${tab === 'Library' && collectionView === 'New Releases' ? 'active' : ''}`} onClick={() => chooseCategory('Recent releases')}><span className="sidebar-icon" aria-hidden="true">◷</span>Recent releases</button></section>
         <section className="sidebar-group"><h2>TOP IN YOUR VAULT</h2><button className={`sidebar-link ${tab === 'Library' && collectionView === 'Top' ? 'active' : ''}`} onClick={() => chooseCategory('Top rated')}><span className="sidebar-icon" aria-hidden="true">▴</span>Top rated</button></section>
         <section className="sidebar-group"><h2>DISCOVER GAMES</h2>{['Backlog Picks', 'All Games', 'Browse', 'Platforms', 'Stores', 'Collections'].map((name) => <button key={name} className={`sidebar-link ${(name === 'Platforms' && tab === 'Platforms') || (name === 'Stores' && ['Stores', 'Steam Store', 'GOG Store'].includes(tab)) || (tab === 'Discover' && catalogBrowseCategory === name) ? 'active' : ''}`} onClick={() => chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">{name === 'Platforms' ? '▣' : name === 'Stores' ? '⌑' : name === 'Collections' ? '▤' : name === 'Backlog Picks' ? '✦' : '⌕'}</span>{name}</button>)}</section>
         <section className="sidebar-group"><h2>PLATFORMS</h2>{['PC', 'PlayStation 5', 'PlayStation 4', 'PlayStation 2', 'Xbox 360', 'Nintendo Switch', 'GameCube', 'Sega Dreamcast', 'Show all'].map((name) => <button key={`platform-${name}`} className={`sidebar-link ${tab === 'Discover' && discoverPlatform === name ? 'active' : ''}`} onClick={() => name === 'Show all' ? chooseCategory('Platforms') : chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">▣</span>{name}</button>)}</section>
         <section className="sidebar-group"><h2>GENRES</h2>{['Action', 'Adventure', 'RPG', 'Shooter', 'Strategy', 'Puzzle', 'Racing', 'Sports', 'Simulation', 'Horror', 'Indie', 'Show all'].map((name) => <button key={`genre-${name}`} className={`sidebar-link ${tab === 'Discover' && discoverGenre === name ? 'active' : ''}`} onClick={() => name === 'Show all' ? chooseCategory('Genres') : chooseCategory(name)}><span className="sidebar-icon" aria-hidden="true">◆</span>{name}</button>)}</section>
         <button className={`sidebar-link ${tab === 'Activity' ? 'active' : ''}`} onClick={() => chooseCategory('Activity')}><span className="sidebar-icon" aria-hidden="true">◴</span>Activity</button>
-      </aside>
+      </div></aside>
       <div className="workspace-main">
 
     {tab === 'Home' && <HomePage profile={profile} games={games} stats={stats} navigate={chooseCategory} openGame={openDetails} Cover={VaultCover} gog={gogState.account}/>}
@@ -678,12 +692,13 @@ function App() {
       <section className="stats-grid">{[['IN VAULT', stats.total], ['COMPLETED', `${stats.completed} (${stats.completion}%)`], ['BACKLOG', stats.backlog], ['RECORDED PLAYTIME', prettyTime(stats.playtime)]].map(([label, value]) => <div className="vgui-window stat" key={label}><small>{label}</small><strong>{value}</strong></div>)}</section>
       <section className="library-layout library-only">
         <div className="vgui-window library-window"><div className="section-heading"><div><small>{collectionView === 'New Releases' || collectionView === 'Top' ? 'PERSONAL COLLECTION · FILTERED VIEW' : 'PERSONAL COLLECTION'}</small><h1>{collectionTitle} <span>{visible.length}</span></h1></div><div className="heading-actions"><button className="button" onClick={spinBacklog}>Backlog roulette</button><button className="button primary" disabled={syncing} onClick={sync}>{syncing ? 'Syncing…' : '↻ Sync Steam'}</button></div></div>
-          <div className="toolbar"><input aria-label="Search library" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="Search title, platform, genre…"/><select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1) }}><option>All statuses</option>{STATUSES.map((value) => <option key={value}>{value}</option>)}</select><button className={`button ${view === 'grid' ? 'selected' : ''}`} onClick={() => setView('grid')} title="Poster grid">▦</button><button className={`button ${view === 'list' ? 'selected' : ''}`} onClick={() => setView('list')} title="Compact list">☷</button></div>
+          <div className="toolbar"><input aria-label="Search library" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="Search title, platform, genre…"/><select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1) }}><option>All statuses</option>{STATUSES.map((value) => <option key={value}>{value}</option>)}</select><button className={`button ${view === 'grid' ? 'selected' : ''}`} onClick={() => setView('grid')} title="Poster grid" aria-label="Grid view" aria-pressed={view === 'grid'}>▦ Grid</button><button className={`button ${view === 'list' ? 'selected' : ''}`} onClick={() => setView('list')} title="Compact list" aria-label="List view" aria-pressed={view === 'list'}>☷ List</button></div>
           {roulette && <div className="roulette-result">{roulette.artwork_hero_url && <img className="roulette-backdrop" src={roulette.artwork_hero_url} alt=""/>}<div className="roulette-poster"><GameCover title={roulette.title} cover={roulette.cover_image} backdrop={roulette.backdrop_url}/></div><div className="roulette-copy"><small>BACKLOG ROULETTE // TONIGHT&apos;S PICK</small><b>{roulette.title}</b><span>{roulette.platform} · {roulette.year || 'Release year unknown'} · {prettyTime(roulette.playtime_minutes)}</span>{roulette.summary && <p>{roulette.summary.slice(0, 180)}{roulette.summary.length > 180 ? '…' : ''}</p>}<div><button className="button" onClick={() => openDetails(roulette)}>Game details</button>{roulette.steam_app_id && <a className="button primary" href={`steam://run/${roulette.steam_app_id}`}>Launch in Steam ↗</a>}</div></div><button className="roulette-close" onClick={() => setRoulette(null)} aria-label="Close roulette preview">×</button></div>}
           <PageControls page={currentPage} pageCount={pageCount} total={visible.length} onChange={setPage}/>
-          {pageGames.length ? <div className={view === 'grid' ? 'game-grid' : 'game-list'}>{pageGames.map((game) => <article className="game-card" key={game.id}>
+          {view === 'list' && pageGames.length > 0 && <div className="library-list-heading" aria-hidden="true"><span>Game</span><span>Status</span><span>Details</span></div>}
+          {pageGames.length ? <div className={view === 'grid' ? 'game-grid' : 'game-list'}>{pageGames.map((game) => <article className="game-card" key={game.id} onContextMenu={(event) => showGameMenu(event, game)}>
             <div className="poster"><button type="button" className="poster-trigger" aria-label={`View details for ${game.title}`} onClick={() => openDetails(game)}><GameCover title={game.title} cover={game.cover_image} backdrop={game.backdrop_url}/><span className="poster-view">Details</span></button><button className={`favorite ${game.is_favorite ? 'on' : ''}`} onClick={() => editGame(game, { is_favorite: !game.is_favorite })} title="Toggle favorite">★</button></div>
-            <div className="game-info"><button type="button" className="game-title detail-title" onClick={() => openDetails(game)}><b title={game.title}>{game.title}</b><span>{game.year || '—'} · {game.platform}</span></button><select aria-label={`Status for ${game.title}`} value={game.status} onChange={(event) => changeStatus(game, event.target.value)}>{STATUSES.map((value) => <option key={value}>{value}</option>)}</select><div className="game-meta"><span>{game.genres?.join(', ') || game.genre || 'Unclassified'}</span><span>{game.playtime_available === false ? 'Playtime unavailable' : prettyTime(game.playtime_minutes)}</span></div><div className="game-actions"><label>★ <input aria-label={`Rating for ${game.title}`} type="number" min="1" max="10" defaultValue={game.rating || ''} placeholder="Rate" onBlur={(event) => { if (event.target.value) editGame(game, { rating: Number(event.target.value) }) }}/></label><button onClick={() => openDetails(game)}>Review</button><button onClick={() => { const notes = window.prompt('Vault notes', game.notes || ''); if (notes !== null) editGame(game, { notes }) }}>Notes</button><button onClick={() => { const price = window.prompt('Purchase price (number)', game.purchase_price ?? ''); if (price !== null && price !== '') editGame(game, { purchase_price: Number(price) }) }}>Price</button>{game.steam_app_id && <a href={`steam://run/${game.steam_app_id}`}>Play ↗</a>}<button className="delete-action" onClick={() => removeGame(game)} title="Remove from vault">Remove</button></div></div>
+            <div className="game-info"><button type="button" className="game-title detail-title" onClick={() => openDetails(game)}><b title={game.title}>{game.title}</b><span>{game.year || '—'} · {game.platform}</span></button><select aria-label={`Status for ${game.title}`} value={game.status} onChange={(event) => changeStatus(game, event.target.value)}>{STATUSES.map((value) => <option key={value}>{value}</option>)}</select><div className="game-meta"><span>{game.genres?.join(', ') || game.genre || 'Unclassified'}</span><span>{game.playtime_available === false ? 'Playtime unavailable' : prettyTime(game.playtime_minutes)}</span></div><div className="game-actions"><label>★ <input aria-label={`Rating for ${game.title}`} type="number" min="1" max="10" defaultValue={game.rating || ''} placeholder="Rate" onBlur={(event) => { if (event.target.value) editGame(game, { rating: Number(event.target.value) }) }}/></label><button type="button" className="game-menu-trigger" aria-label={`Actions for ${game.title}`} aria-haspopup="menu" aria-expanded={gameMenu?.game.id === game.id} onClick={(event) => gameMenu?.game.id === game.id ? closeGameMenu() : showGameMenu(event, game)}>Actions ▾</button><button onClick={() => openDetails({ ...game, start_review: true })}>Review</button>{game.steam_app_id && <a href={`steam://run/${game.steam_app_id}`}>Play ↗</a>}</div></div>
           </article>)}</div> : <div className="empty-state">{games.length ? 'No games match those filters.' : 'Your vault is empty. Sync Steam or add your first game.'}</div>}
           <PageControls page={currentPage} pageCount={pageCount} total={visible.length} onChange={setPage}/>
         </div>
@@ -764,6 +779,18 @@ function App() {
       <article className="vgui-window content-window"><small>CO-OP COMPATIBILITY</small><h1>LAN Party Matcher</h1><p>Find shared co-op or multiplayer titles between your public profile and a friend’s Steam ID.</p><form className="inline-form" onSubmit={findMatches}><input inputMode="numeric" pattern="[0-9]{17}" required value={friendId} onChange={(event) => setFriendId(event.target.value)} placeholder="17-digit Steam ID"/><button className="button primary">Find games</button></form>{matches.map((game) => <div className="match-row" key={game.id}>{game.cover_url && <img src={game.cover_url} alt=""/>}<b>{game.title}</b><span>{game.co_op ? 'Co-op' : 'Multiplayer'}</span></div>)}</article></section>}
 
     {tab === 'Settings' && <section className="vgui-window content-window settings-window"><small>CLIENT CONFIGURATION</small><h1>Interface Settings</h1><label className="setting-row"><span><b>VGUI skin</b><small>Saved to your RetroVault profile and applied throughout the site.</small></span><select value={profile?.preferred_theme || 'vgui-olive'} onChange={(event) => saveProfile({ preferred_theme: event.target.value, custom_theme: {} }).catch(() => {})}>{THEMES.map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}</select></label><div className="theme-builder"><h2>Custom skin colors</h2><p>Optional overrides for background, panels, accent, and text. Defaults return when a field is cleared.</p><div className="color-grid">{[['background', 'Background'], ['panel', 'Panel'], ['accent', 'Accent'], ['text', 'Text']].map(([key, label]) => <label key={key}>{label}<input type="color" value={profile?.custom_theme?.[key] || ({ background: '#171914', panel: '#252820', accent: '#a9d4ff', text: '#e5e5dc' })[key]} onChange={(event) => setProfile((current) => ({ ...current, custom_theme: { ...current?.custom_theme, [key]: event.target.value } }))}/></label>)}</div><button className="button primary" onClick={() => saveProfile({ custom_theme: profile.custom_theme || {} }).catch(() => {})}>Save custom colors</button></div><div className="setting-row"><span><b>Steam account</b><small>{profile?.profile_url || user.id}</small></span><span>{steamDisplayName}</span></div></section>}
+
+    {gameMenu && <GameActionsMenu key={gameMenu.game.id} title={gameMenu.game.title} x={gameMenu.x} y={gameMenu.y} opener={gameMenu.opener} onClose={closeGameMenu} items={[
+      { label: 'Game details…', action: () => openDetails(gameMenu.game) },
+      ...(gameMenu.game.steam_app_id ? [{ label: 'Launch game', hint: 'Steam', action: () => { window.location.href = `steam://run/${gameMenu.game.steam_app_id}` } }] : []),
+      { label: gameMenu.game.review_text ? 'Edit your review…' : 'Write a review…', action: () => openDetails({ ...gameMenu.game, start_review: true }) },
+      { label: gameMenu.game.is_favorite ? 'Remove from favorites' : 'Add to favorites', action: () => editGame(gameMenu.game, { is_favorite: !gameMenu.game.is_favorite }) },
+      { separator: true },
+      { label: 'Edit notes…', action: () => { const notes = window.prompt('Vault notes', gameMenu.game.notes || ''); if (notes !== null) editGame(gameMenu.game, { notes }) } },
+      { label: 'Set purchase price…', action: () => { const price = window.prompt('Purchase price (number)', gameMenu.game.purchase_price ?? ''); if (price !== null && price !== '') editGame(gameMenu.game, { purchase_price: Number(price) }) } },
+      { separator: true },
+      { label: 'Remove from vault', action: () => removeGame(gameMenu.game) },
+    ]}/>}
 
     {selectedGame && <GameDetailsDialog key={`${selectedGame.catalog_only ? 'catalog' : 'user'}-${selectedGame.id}`} game={selectedGame} details={gameDetails} loading={detailsLoading} error={detailsError} onClose={closeDetails} onSaveReview={saveReview} onAddToBacklog={addRecommendationToBacklog}/>}
       </div>

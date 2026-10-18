@@ -18,7 +18,7 @@ The RetroVault brand uses the supplied pixel-art vault logo in [`public/retrovau
 - **My Profile:** identity, editable bio, recorded playtime, completion, ratings, favorites, platform/genre breakdowns, most played games, recent activity, paginated own reviews with sorting, connected accounts, and theme previews.
 - **Separate Steam sync:** Steam import stays in the Library and continues tracking Steam playtime. Manually added console and PC editions use the same catalog, with the selected platform stored on your collection entry.
 - **Personal collection:** add manually, track a status, set a 1–10 rating, favorite a title, edit notes, or remove it from your collection.
-- **Collection views:** poster grid or compact list, search and status filters, completion totals, backlog size and Steam playtime.
+- **Collection views:** the library opens as a compact list with Game, Status, and Details columns; a poster grid is also available. Search and status filters work with both views. Right-click a library game or use **Actions** to open its details, launch Steam, write a review, manage favorites/notes/purchase price, or remove it. The menu supports arrow keys, Home/End, and Escape.
 - **Paged library:** 24 games per page, with page controls that follow the active search and status filters.
 - **Game dossiers and artwork:** descriptions, platforms, release details, Metacritic, RAWG ratings, developer/publisher and screenshots appear first, followed by personal actions and community reviews. Open screenshots in an in-site theater viewer with next/previous navigation and keyboard controls. Existing covers survive RAWG enrichment; affected GameDB entries recover their original IGDB covers on opening. Landscape artwork keeps its aspect ratio. RAWG, GameDB/IGDB, and SteamGridDB supply metadata and artwork when available.
 - **Player reviews:** write a 1–10 rating and text review for any game in your collection, or use **Add & write review** from a catalog dossier. Both Steam and RetroVault reviews show **5 per page**, with **Read more / Show less** for long text. Steam reviews are English and sortable by helpfulness, newest, or recently updated, with positive/negative filters. RetroVault reviews have rating filters and newest/highest/lowest sorting. Its pagination counts only public reviews and the current player's own reviews. The Reviews page also lets you choose a game.
@@ -29,6 +29,10 @@ The RetroVault brand uses the supplied pixel-art vault logo in [`public/retrovau
 - **LAN matcher:** compare a player's collection with another public profile and find shared co-op or multiplayer titles.
 - **Backlog roulette:** choose a random Backlog entry and launch Steam games with the `steam://run/<appId>` link.
 - **Vault audit:** shows backlog size and, when purchase prices are recorded, total cost and cost per tracked play hour.
+
+### Classic Steam presentation
+
+The interface follows early Steam's VGUI style: square frames, flat panels, one-pixel bevels, recessed fields, compact Tahoma typography, and selected rows. VGUI Olive uses the classic olive-and-mustard palette; all ten skins and custom colors apply to the sidebar, menus, stores, and game dialogs. Home includes a launcher with labeled game, store, profile, and achievement actions. On narrow screens, **Browse** expands the grouped sidebar and closes after selecting a destination.
 
 ### Collection statuses
 

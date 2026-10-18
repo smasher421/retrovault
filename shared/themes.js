@@ -1,6 +1,6 @@
 // Shared by the client and API so saved skins and validation stay in step.
 export const THEMES = [
-  { id: 'vgui-olive', name: 'VGUI Olive', game: 'Steam · 2004', mark: '▣', colors: ['#171914', '#242720', '#2d3028', '#41443a', '#e3e4db', '#9ea091', '#a9d4ff', '#1d315d'] },
+  { id: 'vgui-olive', name: 'VGUI Olive', game: 'Steam · 2004', mark: '▣', colors: ['#30372b', '#4c5844', '#58634e', '#2c3425', '#e5e8dc', '#c0c8b5', '#dfd58b', '#70642a'] },
   { id: 'source-obsidian', name: 'Source Obsidian', game: 'Source Engine', mark: 'S', colors: ['#111416', '#202528', '#2a3235', '#485357', '#e3e4db', '#a4adaf', '#d98a62', '#503225'] },
   { id: 'hev-hazard', name: 'HEV Hazard', game: 'Half-Life', mark: 'λ', colors: ['#211a12', '#30261a', '#403221', '#72552e', '#fff0d5', '#c1a77d', '#ffb642', '#563b16'] },
   { id: 'lan-party-98', name: 'LAN Party 98', game: 'The LAN era', mark: '98', colors: ['#15202a', '#243544', '#30475b', '#45637b', '#e3e4db', '#9cb8c8', '#77e2cc', '#174d4b'] },

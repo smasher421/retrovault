@@ -1,0 +1,222 @@
+/* Steam's early VGUI: flat faces, square frames, recessed fields, and one-pixel bevels. */
+:root {
+  --vgui-font: Tahoma, Verdana, Arial, sans-serif;
+  --vgui-highlight: color-mix(in srgb, var(--custom-panel) 68%, #e7ecd5);
+  --vgui-shadow: color-mix(in srgb, var(--custom-panel) 55%, #090d07);
+  --vgui-recess: color-mix(in srgb, var(--custom-panel) 72%, #10170e);
+  --vgui-raised: inset 1px 1px var(--vgui-highlight), inset -1px -1px var(--vgui-shadow);
+  --vgui-inset: inset 1px 1px var(--vgui-shadow), inset -1px -1px var(--vgui-highlight);
+}
+
+body { background: var(--custom-bg); }
+.app-shell, .login-screen, .boot-screen, .details-overlay, .screenshot-viewer { font-family: var(--vgui-font); }
+button, input, select, textarea { font-family: var(--vgui-font); }
+:where(button, input, select, textarea, progress, dialog) { border-radius: 0; }
+button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--custom-accent);
+  outline-offset: 2px;
+}
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
+::-webkit-scrollbar { width: 14px; height: 14px; }
+::-webkit-scrollbar-track { background: var(--vgui-recess); box-shadow: var(--vgui-inset); }
+::-webkit-scrollbar-thumb { background: var(--custom-panel); border: 1px solid var(--vgui-shadow); box-shadow: var(--vgui-raised); }
+::-webkit-scrollbar-corner { background: var(--custom-panel); }
+
+.app-shell { padding: 12px; }
+.vgui-window { border-color: var(--vgui-shadow); background: var(--custom-panel); box-shadow: var(--vgui-raised); }
+.client-caption { display: flex; align-items: center; gap: 7px; min-height: 28px; margin: 1px; padding: 3px 7px; background: var(--panel-hi); color: var(--custom-text); font-size: 11px; }
+.client-caption > b { font-weight: 400; }
+.client-caption > span:first-child { color: var(--custom-accent); font-size: 15px; }
+.client-caption-description { flex: 1; padding-left: 8px; color: var(--muted); }
+.client-caption .button { min-height: 22px; padding: 2px 9px; }
+.titlebar { min-height: 78px; padding: 7px 12px; background: var(--custom-panel); border-bottom: 0; }
+.brand-lockup.brand-home > img { width: 94px; height: 94px; margin-block: -8px; }
+.brand-lockup strong { color: var(--custom-text); font: 400 20px var(--vgui-font); letter-spacing: 0; text-transform: none; text-shadow: none; }
+.brand-lockup small { color: var(--muted); font: 11px var(--vgui-font); letter-spacing: 0; }
+.account-chip { gap: 10px; }
+.account-profile-button { font-size: 12px; }
+.account-profile-button small { font-size: 11px; }
+.account-chip img, .sidebar-profile img, .profile-avatar { border: 1px solid var(--vgui-shadow); padding: 1px; background: var(--vgui-recess); }
+
+.button, .steam-store-tab, .achievement-filters button, .screenshot-viewer-close, .screenshot-viewer-nav {
+  min-height: 30px;
+  padding: 6px 12px;
+  border: 1px solid var(--vgui-shadow);
+  background: var(--custom-panel);
+  box-shadow: var(--vgui-raised);
+  color: var(--custom-text);
+  font-size: 12px;
+  font-weight: 400;
+  filter: none;
+}
+.button:hover, .steam-store-tab:hover, .achievement-filters button:hover { background: var(--panel-hi); filter: none; }
+.button:active:not(:disabled), .steam-store-tab:active, .achievement-filters button:active { box-shadow: var(--vgui-inset); }
+.button.primary { border-color: var(--vgui-shadow); background: var(--accent-bg); color: var(--custom-text); }
+.button.primary:hover { background: var(--accent-bg); text-decoration: underline; }
+.button.small { min-height: 26px; padding: 4px 9px; font-size: 11px; }
+.button:disabled { opacity: .55; cursor: not-allowed; }
+.toolbar .selected, .steam-store-tab.active, .achievement-filters button.active, .review-source-picker [aria-pressed="true"] {
+  border-color: var(--vgui-shadow);
+  background: var(--accent-bg);
+  box-shadow: var(--vgui-inset);
+  color: var(--custom-text);
+}
+.app-shell input, .app-shell select, .app-shell textarea, .details-dialog select, .details-dialog textarea {
+  border-color: var(--vgui-shadow);
+  background-color: var(--vgui-recess);
+  box-shadow: var(--vgui-inset);
+  color: var(--custom-text);
+}
+.app-shell select, .details-dialog select { min-height: 29px; }
+.toolbar { gap: 6px; margin-block: 10px; }
+.toolbar input { padding: 7px 9px; }
+.notice { background: var(--accent-bg); border: 1px solid var(--vgui-shadow); box-shadow: var(--vgui-inset); color: var(--custom-text); }
+
+.app-workspace { grid-template-columns: 220px minmax(0, 1fr); gap: 12px; margin-top: 12px; }
+.category-sidebar { padding: 4px; background: var(--vgui-recess); border-color: var(--vgui-shadow); box-shadow: var(--vgui-inset); }
+.sidebar-caption { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; background: var(--custom-panel); box-shadow: var(--vgui-raised); font-size: 12px; }
+.sidebar-caption b { font-weight: 400; }
+.sidebar-caption > span { color: var(--muted); font-size: 10px; }
+.sidebar-mobile-toggle { display: none; }
+.sidebar-profile { padding: 10px 8px; margin-bottom: 3px; border-bottom: 1px solid var(--vgui-shadow); }
+.sidebar-profile small { font: 10px var(--vgui-font); letter-spacing: 0; }
+.sidebar-group { padding: 8px 0 3px; }
+.sidebar-group h2 { margin: 0 8px 5px; color: var(--custom-accent); font: 10px var(--vgui-font); letter-spacing: .025em; }
+.sidebar-link { min-height: 28px; gap: 7px; padding: 4px 8px; color: var(--custom-text); font-size: 12px; }
+.sidebar-link:hover { background: var(--custom-panel); color: var(--custom-text); }
+.sidebar-link.active { border-color: var(--custom-accent); background: var(--accent-bg); color: var(--custom-text); font-weight: 400; box-shadow: none; }
+.sidebar-icon { width: 15px; color: var(--custom-accent); font-size: 13px; }
+.workspace-main > .content-window { margin-top: 0; }
+.workspace-main > .stats-grid { margin-bottom: 12px; }
+.section-heading { padding-bottom: 10px; border-bottom-color: var(--vgui-shadow); box-shadow: 0 1px var(--vgui-highlight); }
+.section-heading h1, .content-window h1 { font-size: 20px; font-weight: 400; }
+.stat small, .section-heading small, .panel-title small, .content-window > small, .vault-audit > small,
+.home-hero small, .profile-hero > div > small, .dashboard-section .section-heading small { color: var(--muted); font: 10px var(--vgui-font); letter-spacing: .025em; }
+.stats-grid { gap: 8px; margin-block: 0; }
+.stat { padding: 10px 12px; }
+.stat strong { font: 400 21px var(--vgui-font); }
+.content-window > p { color: var(--muted); }
+
+.dashboard-page { gap: 12px; }
+.home-hero, .profile-hero { background: var(--custom-panel); padding: 22px; }
+.home-hero h1 { margin: 8px 0 10px; font: 400 25px/1.25 var(--vgui-font); letter-spacing: 0; }
+.home-hero p { margin-bottom: 16px; font-size: 13px; line-height: 1.6; }
+.home-hero > img { width: 190px; max-width: 30%; margin-block: -10px; }
+.home-launcher { padding: 16px; }
+.home-launcher h2 { margin: 0 0 10px; color: var(--custom-text); font-size: 14px; font-weight: 400; }
+.home-command-list { display: grid; gap: 5px; }
+.home-command { display: grid; grid-template-columns: 160px minmax(0, 1fr); align-items: center; gap: 16px; width: 100%; padding: 0; border: 0; background: none; text-align: left; font-size: 12px; }
+.home-command-label { display: block; padding: 7px 10px; border: 1px solid var(--vgui-shadow); background: var(--custom-panel); box-shadow: var(--vgui-raised); color: var(--custom-text); }
+.home-command-description { color: var(--muted); line-height: 1.5; }
+.home-command:hover .home-command-label { background: var(--panel-hi); }
+.home-command:active .home-command-label { box-shadow: var(--vgui-inset); }
+.home-command:focus-visible { outline-offset: 2px; }
+.dashboard-section { padding: 16px; }
+.dashboard-section > h2 { margin-bottom: 12px; padding-bottom: 9px; border-bottom: 1px solid var(--vgui-shadow); box-shadow: 0 1px var(--vgui-highlight); font-size: 15px; font-weight: 400; }
+.home-game-strip { gap: 10px; }
+.home-game { border-color: var(--vgui-shadow); background: var(--vgui-recess); box-shadow: var(--vgui-inset); }
+.home-game > img, .home-game > .poster-fallback { height: 145px; }
+.home-game > span:not(.poster-fallback) { gap: 5px; padding: 10px; }
+.profile-hero h1 { font-size: 26px; font-weight: 400; }
+.connected-account, .profile-reviews article, .gog-login { background: var(--vgui-recess); border-color: var(--vgui-shadow); box-shadow: var(--vgui-inset); }
+.theme-card { border-color: var(--vgui-shadow); box-shadow: var(--vgui-inset); }
+
+.game-card, .review-card, .steam-reviews-panel, .catalog-search-panel, .catalog-form,
+.directory-footer, .platform-tile, .store-directory-card, .achievement-card, .achievement-overview {
+  background: var(--vgui-recess);
+  border-color: var(--vgui-shadow);
+  box-shadow: var(--vgui-inset);
+}
+.game-grid { gap: 10px; }
+.game-info { padding: 10px; }
+.game-list { gap: 0; border: 1px solid var(--vgui-shadow); box-shadow: var(--vgui-inset); }
+.game-list .game-card { padding: 3px; border: 0; border-bottom: 1px solid var(--vgui-shadow); background: var(--vgui-recess); box-shadow: none; }
+.game-list .game-card:nth-child(even) { background: color-mix(in srgb, var(--vgui-recess) 90%, var(--custom-panel)); }
+.game-list .game-card:last-child { border-bottom: 0; }
+.game-list .game-card:focus-within { outline: 1px solid var(--custom-accent); outline-offset: -1px; }
+.game-list .poster { width: 48px; height: 70px; }
+.game-list .game-info { grid-template-columns: minmax(0, 1fr) 140px 160px; gap: 6px 14px; padding: 5px 9px; }
+.game-list .game-info > select { grid-row: 1; grid-column: 2; }
+.game-list .game-meta { display: grid; grid-column: 3; grid-row: 1; gap: 4px; }
+.game-list .game-actions { grid-column: 1 / -1; grid-row: 2; }
+.library-list-heading { display: grid; grid-template-columns: minmax(0, 1fr) 140px 160px; gap: 14px; padding: 7px 13px 7px 62px; background: var(--custom-panel); border: 1px solid var(--vgui-shadow); box-shadow: var(--vgui-raised); font-size: 11px; }
+.game-actions { gap: 9px; }
+.game-actions button:hover, .game-actions a:hover { color: var(--custom-accent); text-decoration: underline; }
+.game-actions .game-menu-trigger { min-height: 24px; padding: 3px 8px; border: 1px solid var(--vgui-shadow); background: var(--custom-panel); box-shadow: var(--vgui-raised); color: var(--custom-text); font-size: 11px; }
+.game-context-menu { position: fixed; z-index: 75; width: 240px; max-height: calc(100vh - 16px); padding: 3px; overflow-y: auto; border: 1px solid var(--vgui-shadow); background: var(--custom-panel); box-shadow: var(--vgui-raised), 2px 2px #0005; color: var(--custom-text); font: 12px var(--vgui-font); }
+.game-context-title { padding: 6px 8px; overflow: hidden; border-bottom: 1px solid var(--vgui-shadow); color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.game-context-menu [role="menuitem"] { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 29px; padding: 6px 8px; border: 0; background: none; color: var(--custom-text); text-align: left; }
+.game-context-menu [role="menuitem"]:focus { outline: none; background: var(--accent-bg); color: var(--custom-text); }
+.game-context-menu [role="menuitem"] small { color: var(--muted); font-size: 10px; }
+.game-context-menu [role="separator"] { height: 2px; margin: 3px 4px; border-top: 1px solid var(--vgui-shadow); border-bottom: 1px solid var(--vgui-highlight); }
+.favorite { box-shadow: var(--vgui-raised); background: var(--custom-panel); border-color: var(--vgui-shadow); }
+.roulette-result, .selected-game-preview, .steam-store-hero, .store-directory-card.store-integrated { background: var(--custom-panel); border-color: var(--vgui-shadow); box-shadow: var(--vgui-inset); }
+.roulette-copy > small, .roulette-copy > span, .roulette-copy p { color: var(--muted); }
+.steam-store-hero h1 { font-size: 24px; font-weight: 400; }
+.platform-mark, .store-mark, .price-block { background: var(--vgui-recess); border-color: var(--vgui-shadow); box-shadow: var(--vgui-inset); }
+.price-discount { background: var(--accent-bg); color: var(--custom-text); }
+.price-block .steam-product-price b { color: var(--custom-text); }
+.steam-review-card { border-bottom-color: var(--vgui-shadow); }
+
+.details-overlay { background: #080a08b8; backdrop-filter: none; }
+.details-dialog { border-color: var(--vgui-shadow); box-shadow: var(--vgui-raised), 3px 3px #0005; }
+.details-dialog .details-header { margin: 1px; background: var(--panel-hi); border-bottom-color: var(--vgui-shadow); }
+.details-header h2 { font-size: 18px; font-weight: 400; }
+.details-dialog .details-cover { box-shadow: var(--vgui-inset); border-color: var(--vgui-shadow); }
+.screenshot-strip { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.screenshot-viewer { background: color-mix(in srgb, var(--custom-bg) 94%, #000); color: var(--custom-text); }
+.screenshot-viewer-header small, .screenshot-viewer-hint { color: var(--muted); }
+.screenshot-viewer-header strong { color: var(--custom-text); }
+.screenshot-viewer-close:hover, .screenshot-viewer-nav:hover { background: var(--panel-hi); }
+.login-window { box-shadow: var(--vgui-raised), 3px 3px #0005; }
+.login-window .titlebar { min-height: 30px; padding: 6px 10px; margin: 1px; background: var(--panel-hi); }
+.login-content h1 { font-size: 23px; font-weight: 400; }
+.statusbar { background: var(--vgui-recess); border-color: var(--vgui-shadow); box-shadow: var(--vgui-inset); color: var(--muted); }
+.statusbar > span + span { padding-left: 10px; border-left: 1px solid var(--vgui-shadow); }
+.statusbar i, .statusbar span:first-child.offline i { box-shadow: none; }
+
+@media (max-width: 1100px) {
+  .app-workspace { grid-template-columns: 190px minmax(0, 1fr); gap: 10px; }
+  .game-list .game-info { grid-template-columns: minmax(0, 1fr) 130px; }
+  .game-list .game-meta { display: none; }
+  .library-list-heading { grid-template-columns: minmax(0, 1fr) 130px; }
+  .library-list-heading > span:last-child { display: none; }
+}
+@media (max-width: 800px) {
+  .app-shell { padding: 8px; }
+  .app-workspace { grid-template-columns: 1fr; }
+  .category-sidebar { display: block; padding: 4px; overflow: visible; }
+  .sidebar-caption, .sidebar-navigation { display: none; }
+  .sidebar-mobile-toggle { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--vgui-shadow); background: var(--custom-panel); box-shadow: var(--vgui-raised); text-align: left; }
+  .sidebar-mobile-toggle b { font-weight: 400; }
+  .sidebar-mobile-toggle > span { margin-left: auto; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .sidebar-mobile-toggle i { color: var(--custom-accent); font-size: 18px; font-style: normal; }
+  .is-expanded .sidebar-navigation { display: block; max-height: min(65vh, 460px); padding-top: 6px; overflow-y: auto; }
+  .sidebar-profile { width: 100%; margin: 0; padding: 9px 8px; border-right: 0; }
+  .sidebar-group { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0; }
+  .sidebar-group h2 { grid-column: 1 / -1; }
+  .sidebar-group .sidebar-link { display: flex; width: 100%; min-height: 36px; }
+}
+@media (max-width: 650px) {
+  .titlebar { min-height: 64px; padding: 6px 9px; }
+  .brand-lockup.brand-home > img { width: 76px; height: 76px; margin-block: -7px; }
+  .brand-lockup strong { font-size: 16px; }
+  .home-hero { padding: 18px; gap: 8px; }
+  .home-hero h1 { font-size: 21px; }
+  .home-hero > img { width: 112px; max-width: 65%; margin: -12px 0 0; }
+  .home-launcher, .dashboard-section { padding: 13px; }
+  .home-command { grid-template-columns: 116px minmax(0, 1fr); gap: 11px; }
+  .home-command-label { min-height: 36px; padding: 9px 8px; }
+  .home-command-description { font-size: 11px; }
+  .home-game > img, .home-game > .poster-fallback { height: 120px; }
+  .game-list .game-info { grid-template-columns: minmax(0, 1fr) 110px; gap: 6px 8px; }
+  .library-list-heading { grid-template-columns: minmax(0, 1fr) 110px; gap: 8px; }
+  .game-list .game-actions { gap: 6px 10px; flex-wrap: wrap; }
+  .game-actions button, .game-actions a { min-height: 24px; }
+  .screenshot-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .statusbar > span + span { padding-left: 0; border-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto; transition: none; }
+}
