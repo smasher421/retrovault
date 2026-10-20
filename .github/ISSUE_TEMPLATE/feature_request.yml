@@ -1,0 +1,23 @@
+name: Feature idea
+description: Suggest an improvement for the vault.
+title: "[Idea] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would this help you do?
+      description: Describe a concrete use case or a difficulty you have now.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+      description: Explain how you would like it to work. Examples or references are welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Related games, platforms, or services
+      description: For an integration, mention whether you need discovery, ownership, playtime, or achievements.

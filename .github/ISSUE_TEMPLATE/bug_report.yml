@@ -1,0 +1,38 @@
+name: Bug report
+description: Something in RetroVault is not working as expected.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: "Please leave out passwords, API keys, session cookies, and temporary GOG sign-in URLs."
+  - type: input
+    id: section
+    attributes:
+      label: Page or feature
+      placeholder: "For example: Add Games, Steam sync, GOG Store, achievements"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What did you click or enter?
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Include the error message and a screenshot if useful.
+    validations:
+      required: true
+  - type: input
+    id: game
+    attributes:
+      label: Game, release year, platform, and source
+      placeholder: "For example: Burnout Dominator (2007), PlayStation 2, catalog search"
+  - type: input
+    id: environment
+    attributes:
+      label: Browser and device
+      placeholder: "For example: Chrome on Windows, Safari on iPhone"
