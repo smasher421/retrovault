@@ -1,18 +1,19 @@
 import { useState } from 'react'
 import { THEMES } from '../../shared/themes.js'
+import { GAME_STATUSES } from '../../shared/library-schema.js'
 import { gogRequest } from '../useGogAccount.js'
 
 const hours = (minutes = 0) => `${Math.round(minutes / 60).toLocaleString()}h`
 const date = (value) => value ? new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : 'Not yet'
-const statuses = ['Backlog', 'Playing', 'Completed', '100% Completed', 'Abandoned']
+const statuses = GAME_STATUSES
 
 function GameStrip({ title, games, onOpen, empty, Cover }) {
   return <section className="vgui-window dashboard-section"><h2>{title}</h2>{games.length ? <div className="home-game-strip">{games.map((game) => <button className="home-game" key={game.id} onClick={() => onOpen(game)}><Cover game={game}/><span><b>{game.title}</b><small>{game.platform} · {game.playtime_available === false ? 'Playtime unavailable' : hours(game.playtime_minutes)}</small></span></button>)}</div> : <p className="muted-copy">{empty}</p>}</section>
 }
 
 export function HomePage({ profile, games, stats, navigate, openGame, Cover, gog }) {
-  const recent = [...games].filter((game) => game.last_played_at || game.status === 'Playing').sort((a, b) => (Date.parse(b.last_played_at) || 0) - (Date.parse(a.last_played_at) || 0)).slice(0, 4)
-  const backlog = [...games].filter((game) => game.status === 'Backlog').sort((a, b) => (b.is_favorite - a.is_favorite) || (b.metacritic_score || b.rating_avg || 0) - (a.metacritic_score || a.rating_avg || 0)).slice(0, 4)
+  const recent = [...games].filter((game) => game.tracking?.hidden !== 'Yes' && (game.last_played_at || game.status === 'Playing')).sort((a, b) => (Date.parse(b.last_played_at) || 0) - (Date.parse(a.last_played_at) || 0)).slice(0, 4)
+  const backlog = [...games].filter((game) => game.tracking?.hidden !== 'Yes' && game.status === 'Backlog').sort((a, b) => (b.is_favorite - a.is_favorite) || (b.metacritic_score || b.rating_avg || 0) - (a.metacritic_score || a.rating_avg || 0)).slice(0, 4)
   return <div className="dashboard-page">
     <section className="vgui-window home-hero"><div><small>Your games</small><h1>Welcome back, {profile?.username || 'player'}.</h1><p>Pick up where you left off, discover a classic, or choose what to play next.</p><div className="heading-actions"><button className="button primary" onClick={() => navigate('My Library')}>Open my library</button><button className="button" onClick={() => navigate('Backlog Picks')}>Find something to play</button></div></div><img src="/retrovault-logo.png" alt="RetroVault — pixel-art vault" width="1254" height="1254"/></section>
     <section className="stats-grid">{[['GAMES IN YOUR VAULT', stats.total], ['COMPLETED', `${stats.completion}%`], ['RECORDED PLAYTIME', hours(stats.playtime)], ['WAITING IN BACKLOG', stats.backlog]].map(([label, value]) => <div className="vgui-window stat" key={label}><small>{label}</small><strong>{value}</strong></div>)}</section>

@@ -5,6 +5,7 @@ import './App.css'
 import './vault-pages.css'
 import App from './App.jsx'
 import './vgui-classic.css'
+import './library-filters.css'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

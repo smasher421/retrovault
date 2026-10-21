@@ -176,6 +176,23 @@ Private routes require the signed Steam session cookie unless noted.
 | `GET` | `/api/badge/:steamId.svg` | Dynamic SVG completion badge for a public profile. |
 | `GET` | `/api/lan-matches/:steamId` | Lists shared co-op/multiplayer games; the other profile must be public. |
 
+## Library intelligence
+
+Apply `20261021194256_library_intelligence.sql` after the existing migrations. It adds public catalog `discovery_metadata`, private `user_games.tracking`, cached `achievements_summary`, nullable `recent_playtime_minutes`, account `saved_searches`, and the expanded status check. Existing RLS and service-role-only table access remain in place.
+
+The shared vocabulary in `shared/library-schema.js` drives the manual editor and strict API allowlist. `shared/library-filters.js` contains the pure filter engine, query parser, smart collections, sorting and saved-search validation. Filters run before pagination; roulette uses the complete filtered eligible set. Unknown numeric values are never coerced into zero. Tracking is replaced as a validated complete object by the editor; Steam/GOG sync leaves it untouched. Public summaries exclude tracking, cached personal achievement/recent-playtime data and hidden games.
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| POST | `/api/library/refresh` | `{ ids: [userGameId, ...], mode: "metadata" or "achievements" }`; 1-4 owned games, same-origin writes, per-game failures and bounded provider timeouts. |
+| GET | `/api/library/estimates/:id` | Attempts to read an exact public HowLongToBeat title page; returns a preview, never writes estimates automatically. |
+| PATCH | `/api/games/:id` | Accepts validated `tracking` alongside existing editable fields. New statuses use the existing status update operation. |
+| PATCH | `/api/profile` | Accepts at most 25 validated `saved_searches` with unique IDs, short names and supported filter keys. |
+
+Steam metadata refresh uses appdetails, public store tags, appreviews and Deck reports. RAWG tags can be refreshed for linked non-Steam titles. Complete metadata caches for 7 days, partial results for 1 hour; provider failures preserve previous fields. Do not queue hundreds of fetches on library load. Achievement summaries are personal and owner scoped; successful results cache completed/total and the latest unlock date only when a perfect game's full unlock dates are known.
+
+HLTB has no supported integration here and currently blocks automated requests with HTTP 403. Public-page import is best effort; manual main/extras/completionist estimates with an explicit source remain available. Do not substitute RAWG average playtime for completion time or implement access-control bypasses. Local installation/HDR/ultrawide/storage fields are manual when providers do not supply them. See [the player-facing filtering guide](library-filters.md).
+
 ## Security and privacy
 
 - OpenID state is checked against a short-lived, HttpOnly cookie; the OpenID assertion is verified with Steam before a session is issued.
@@ -204,7 +221,7 @@ For your own deployment, configure `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, 
 
 From the project directory, authenticate using `npx vercel login`, run `npx vercel link` to select or create a project in your account, configure that project's environment, and deploy with `npx vercel --prod`. Do not copy another installation's `.vercel/project.json`. On another hosting provider, serve `dist/` and proxy `/api/*` and `/auth/*` to the Express process behind the same HTTPS origin. `npm run preview` previews the frontend only; it is not a replacement for the API.
 
-The focused `npm run test:server` regression uses simulated providers and database responses to check GOG connection state across app instances, ownership pagination/deduplication, batch leases, partial failures, and the public response boundary. It does not log in to a real GOG account or change live data.
+The focused `npm run test:server` regressions cover filtering boundaries, unknown data, query operators, saved searches, smart collections, owner-scoped refresh/persistence, public-profile privacy, and GOG connection state across app instances, ownership pagination/deduplication, batch leases, partial failures, and the public response boundary. It does not log in to a real GOG account or change live data.
 
 ## NPM scripts
 
@@ -216,7 +233,7 @@ The focused `npm run test:server` regression uses simulated providers and databa
 | `npm run build` | Builds the frontend into `dist/`. |
 | `npm run preview` | Previews the Vite production build. |
 | `npm run lint` | Runs ESLint. |
-| `npm run test:server` | Runs the focused GOG regression suite with simulated providers and database responses. |
+| `npm run test:server` | Runs library/filter/privacy and GOG regressions with simulated providers and database responses. |
 
 ## Coding agent skills
 

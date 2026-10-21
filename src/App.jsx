@@ -6,10 +6,14 @@ import GogStore from './components/GogStore.jsx'
 import GameActionsMenu from './components/GameActionsMenu.jsx'
 import StorePrice from './components/StorePrice.jsx'
 import { SteamReviewsPanel, VaultReviewsPanel } from './components/Reviews.jsx'
+import LibraryFilters from './components/LibraryFilters.jsx'
+import GameTrackingDialog from './components/GameTrackingDialog.jsx'
+import { GAME_STATUSES } from '../shared/library-schema.js'
+import { DEFAULT_LIBRARY_FILTERS, filterLibrary, backlogCandidates, gameAttribute } from '../shared/library-filters.js'
 import './game-details.css'
 import useGogAccount from './useGogAccount.js'
 
-const STATUSES = ['Backlog', 'Playing', 'Completed', '100% Completed', 'Abandoned']
+const STATUSES = GAME_STATUSES
 const PAGE_SIZE = 24
 const CONSOLE_PLATFORMS = [
   'PC', 'Steam Deck', 'PlayStation 5', 'PlayStation 4', 'PlayStation 3', 'PlayStation 2', 'PlayStation', 'PSP', 'PS Vita',
@@ -272,8 +276,11 @@ function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [collectionView, setCollectionView] = useState('My Library')
   const [view, setView] = useState('list')
-  const [query, setQuery] = useState('')
-  const [status, setStatus] = useState('All statuses')
+  const [libraryFilters, setLibraryFilters] = useState({ ...DEFAULT_LIBRARY_FILTERS })
+  const [shuffleSeed, setShuffleSeed] = useState(1)
+  const [trackingGame, setTrackingGame] = useState(null)
+  const [libraryRefresh, setLibraryRefresh] = useState({ running: false, total: 0, done: 0, failed: 0, errors: [] })
+  const stopLibraryRefresh = useRef(false)
   const [page, setPage] = useState(1)
   const [form, setForm] = useState(DEFAULT_FORM)
   const [suggestions, setSuggestions] = useState([])
@@ -369,18 +376,14 @@ function App() {
     const completed = games.filter((game) => ['Completed', '100% Completed'].includes(game.status)).length
     const playtime = games.reduce((sum, game) => sum + (game.playtime_minutes || 0), 0)
     const backlog = games.filter((game) => game.status === 'Backlog').length
-    const backlogHours = games.filter((game) => game.status === 'Backlog').reduce((sum, game) => sum + (Number(game.time_to_beat_hours) || 0), 0)
+    const backlogHours = games.filter((game) => game.status === 'Backlog').reduce((sum, game) => sum + (gameAttribute(game, 'estimated') || 0), 0)
     const cost = games.reduce((sum, game) => sum + Number(game.purchase_price || 0), 0)
     return { total: games.length, completed, backlog, backlogHours, playtime, cost, completion: games.length ? Math.round(completed / games.length * 100) : 0 }
   }, [games])
-  const visible = useMemo(() => games.filter((game) => {
-    const matchesQuery = `${game.title} ${game.platform} ${(game.genres || []).join(' ')}`.toLowerCase().includes(query.toLowerCase())
-    const matchesCategory = collectionView === 'Reviews' ? Boolean(game.rating || game.review_text?.trim())
-      : collectionView === 'Wishlist' ? Boolean(game.is_favorite)
-        : collectionView === 'New Releases' ? Number(game.year) >= new Date().getFullYear() - 1
-          : true
-    return matchesQuery && matchesCategory && (status === 'All statuses' || game.status === status)
-  }).sort((a, b) => collectionView === 'Top' ? (b.rating || 0) - (a.rating || 0) : 0), [games, query, status, collectionView])
+  const visible = useMemo(() => filterLibrary(games, libraryFilters, { collectionView, shuffleSeed }), [games, libraryFilters, collectionView, shuffleSeed])
+  const roulettePool = useMemo(() => backlogCandidates(visible), [visible])
+  const roulettePreview = roulettePool.find((game) => game.id === roulette?.id) || null
+  const changeLibraryFilters = (filters) => { setLibraryFilters(filters); setPage(1); setRoulette(null) }
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE))
   const currentPage = Math.min(page, pageCount)
   const pageGames = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
@@ -513,9 +516,38 @@ function App() {
     setGameMenu({ game, x: event.type === 'contextmenu' ? event.clientX || rect.left + 8 : rect.left, y: event.type === 'contextmenu' ? event.clientY || rect.bottom : rect.bottom, opener })
   }
   const spinBacklog = () => {
-    const eligible = games.filter((game) => game.status === 'Backlog')
-    setRoulette(eligible.length ? eligible[Math.floor(Math.random() * eligible.length)] : null)
-    if (!eligible.length) setMessage('Your backlog is empty. Add a game or change a status first.')
+    setRoulette(roulettePool.length ? roulettePool[Math.floor(Math.random() * roulettePool.length)] : null)
+    if (!roulettePool.length) setMessage('No backlog games match the active filters. Adjust filters or add a game to Backlog.')
+  }
+  const saveTracking = async (game, changes) => {
+    const response = await fetch(`/api/games/${game.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes) })
+    const updated = await readJsonResponse(response)
+    if (!response.ok) throw new Error(updated.message || 'Could not save planning.')
+    setGames((items) => items.map((item) => item.id === game.id ? updated : item))
+    setSelectedGame((current) => current?.id === game.id ? updated : current)
+    setMessage('Planning saved. Your filters now use the updated values.')
+  }
+  const refreshLibrary = async (mode) => {
+    if (libraryRefresh.running) return
+    const eligible = games.filter((game) => mode === 'achievements' ? game.steam_app_id : game.steam_app_id || game.rawg_id)
+    if (!eligible.length) { setMessage('No games have a linked provider. Manual planning is available from each game.'); return }
+    stopLibraryRefresh.current = false
+    setLibraryRefresh({ running: true, total: eligible.length, done: 0, failed: 0, errors: [] })
+    try {
+      for (let index = 0; index < eligible.length && !stopLibraryRefresh.current; index += 4) {
+        const batch = eligible.slice(index, index + 4)
+        const response = await fetch('/api/library/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: batch.map((game) => game.id), mode }) })
+        const body = await readJsonResponse(response)
+        if (!response.ok) throw new Error(body.message || 'Refresh failed.')
+        const updates = new Map(body.results.map((result) => [String(result.id), result]))
+        setGames((items) => items.map((game) => {
+          const result = updates.get(String(game.id))
+          return result && !result.error ? { ...game, ...result.library_fields, ...(result.discovery_metadata ? { discovery_metadata: result.discovery_metadata } : {}), ...(result.achievements_summary ? { achievements_summary: result.achievements_summary } : {}) } : game
+        }))
+        setLibraryRefresh((current) => ({ ...current, done: current.done + batch.length, failed: current.failed + body.results.filter((result) => result.error || result.warning).length, errors: [...current.errors, ...body.results.filter((result) => result.error || result.warning).map((result) => `${batch.find((game) => String(game.id) === String(result.id))?.title}: ${result.error || result.warning}`)].slice(0, 100) }))
+      }
+    } catch (error) { setMessage(error.message) }
+    finally { setLibraryRefresh((current) => ({ ...current, running: false })) }
   }
   const openDetails = async (game) => {
     const requestId = ++detailsRequest.current
@@ -612,8 +644,8 @@ function App() {
     closeGameMenu()
     window.scrollTo({ top: 0, behavior: 'instant' })
     setPage(1)
-    setQuery('')
-    setStatus('All statuses')
+    setLibraryFilters({ ...DEFAULT_LIBRARY_FILTERS, sort: category === 'Top rated' ? 'myrating-desc' : 'added-desc' })
+    setRoulette(null)
     if (category === 'Reviews') setTab('Reviews')
     else if (category === 'Achievements') setTab('Achievements')
     else if (category === 'Home') setTab('Home')
@@ -664,7 +696,7 @@ function App() {
   if (loading) return <main className="boot-screen">RETROVAULT // BOOTING…</main>
   if (!user) return <main className="login-screen"><section className="vgui-window login-window"><header className="titlebar"><b>RetroVault 2.0</b><span>Steam Library System</span></header><div className="login-content"><img className="login-logo" src="/retrovault-logo.png" alt="RetroVault — pixel-art vault" width="1254" height="1254" fetchPriority="high"/><h1>Your games. Your story.</h1><p>Sign in with Steam to sync your library, track playtime, and build your personal vault.</p><a className="button primary" href="/auth/steam">Sign in through Steam</a><small>Steam game details must be public for library sync.</small></div></section></main>
 
-  return <main className="app-shell">
+  return <main className="app-shell" inert={Boolean(trackingGame)}>
     <header className="vgui-window top-window"><div className="client-caption"><span aria-hidden="true">▣</span><b>RetroVault</b><span className="client-caption-description">Games library</span><button type="button" className="button small" onClick={() => chooseCategory('Settings')}>Settings</button></div><div className="titlebar"><button className="brand-lockup brand-home" aria-label="RetroVault Home" onClick={() => chooseCategory('Home')}><img src="/retrovault-logo.png" alt="RetroVault" width="1254" height="1254" fetchPriority="high"/><span><strong>{tab === 'Library' ? collectionTitle : tab === 'Profile' ? 'My Profile' : tab}</strong><small>Your personal game vault</small></span></button><div className="account-chip">{profile?.avatar_url && <img src={profile.avatar_url} alt="" />}<button className="account-profile-button" onClick={() => chooseCategory('My Profile')}><b>{steamDisplayName}</b><small>{gogState.account?.connected ? `GOG · ${gogState.account.username}` : 'My profile'}</small></button><button className="button small" onClick={logout}>Log out</button></div></div>
     </header>
 
@@ -691,14 +723,15 @@ function App() {
     {tab === 'Library' && <>
       <section className="stats-grid">{[['IN VAULT', stats.total], ['COMPLETED', `${stats.completed} (${stats.completion}%)`], ['BACKLOG', stats.backlog], ['RECORDED PLAYTIME', prettyTime(stats.playtime)]].map(([label, value]) => <div className="vgui-window stat" key={label}><small>{label}</small><strong>{value}</strong></div>)}</section>
       <section className="library-layout library-only">
-        <div className="vgui-window library-window"><div className="section-heading"><div><small>{collectionView === 'New Releases' || collectionView === 'Top' ? 'PERSONAL COLLECTION · FILTERED VIEW' : 'PERSONAL COLLECTION'}</small><h1>{collectionTitle} <span>{visible.length}</span></h1></div><div className="heading-actions"><button className="button" onClick={spinBacklog}>Backlog roulette</button><button className="button primary" disabled={syncing} onClick={sync}>{syncing ? 'Syncing…' : '↻ Sync Steam'}</button></div></div>
-          <div className="toolbar"><input aria-label="Search library" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="Search title, platform, genre…"/><select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1) }}><option>All statuses</option>{STATUSES.map((value) => <option key={value}>{value}</option>)}</select><button className={`button ${view === 'grid' ? 'selected' : ''}`} onClick={() => setView('grid')} title="Poster grid" aria-label="Grid view" aria-pressed={view === 'grid'}>▦ Grid</button><button className={`button ${view === 'list' ? 'selected' : ''}`} onClick={() => setView('list')} title="Compact list" aria-label="List view" aria-pressed={view === 'list'}>☷ List</button></div>
-          {roulette && <div className="roulette-result">{roulette.artwork_hero_url && <img className="roulette-backdrop" src={roulette.artwork_hero_url} alt=""/>}<div className="roulette-poster"><GameCover title={roulette.title} cover={roulette.cover_image} backdrop={roulette.backdrop_url}/></div><div className="roulette-copy"><small>BACKLOG ROULETTE // TONIGHT&apos;S PICK</small><b>{roulette.title}</b><span>{roulette.platform} · {roulette.year || 'Release year unknown'} · {prettyTime(roulette.playtime_minutes)}</span>{roulette.summary && <p>{roulette.summary.slice(0, 180)}{roulette.summary.length > 180 ? '…' : ''}</p>}<div><button className="button" onClick={() => openDetails(roulette)}>Game details</button>{roulette.steam_app_id && <a className="button primary" href={`steam://run/${roulette.steam_app_id}`}>Launch in Steam ↗</a>}</div></div><button className="roulette-close" onClick={() => setRoulette(null)} aria-label="Close roulette preview">×</button></div>}
+        <div className="vgui-window library-window"><div className="section-heading"><div><small>{collectionView === 'New Releases' || collectionView === 'Top' ? 'PERSONAL COLLECTION · FILTERED VIEW' : 'PERSONAL COLLECTION'}</small><h1>{collectionTitle} <span>{visible.length}</span></h1></div><div className="heading-actions"><button className="button" disabled={!roulettePool.length} title="Choose from all matching backlog games, across every page" onClick={spinBacklog}>Backlog roulette ({roulettePool.length})</button><button className="button primary" disabled={syncing} onClick={sync}>{syncing ? 'Syncing…' : '↻ Sync Steam'}</button></div></div>
+          <LibraryFilters games={games} filters={libraryFilters} onChange={changeLibraryFilters} savedSearches={profile?.saved_searches || []} onSaveSearches={(saved_searches) => saveProfile({ saved_searches })} onShuffle={() => { setShuffleSeed((seed) => seed + 1); setPage(1); setRoulette(null) }} matching={visible.length} eligible={roulettePool.length} onRefresh={refreshLibrary} refresh={libraryRefresh} onCancel={() => { stopLibraryRefresh.current = true }}/>
+          <div className="library-view-controls"><span>Roulette respects all active filters and every results page.</span><button className={`button ${view === 'grid' ? 'selected' : ''}`} onClick={() => setView('grid')} aria-label="Grid view" aria-pressed={view === 'grid'}>Grid</button><button className={`button ${view === 'list' ? 'selected' : ''}`} onClick={() => setView('list')} aria-label="List view" aria-pressed={view === 'list'}>List</button></div>
+          {roulettePreview && <div className="roulette-result">{roulettePreview.artwork_hero_url && <img className="roulette-backdrop" src={roulettePreview.artwork_hero_url} alt=""/>}<div className="roulette-poster"><GameCover title={roulettePreview.title} cover={roulettePreview.cover_image} backdrop={roulettePreview.backdrop_url}/></div><div className="roulette-copy"><small>BACKLOG ROULETTE // TONIGHT&apos;S PICK</small><b>{roulettePreview.title}</b><span>{roulettePreview.platform} · {roulettePreview.year || 'Release year unknown'} · {prettyTime(roulettePreview.playtime_minutes)}</span>{roulettePreview.summary && <p>{roulettePreview.summary.slice(0, 180)}{roulettePreview.summary.length > 180 ? '…' : ''}</p>}<div><button className="button" onClick={() => openDetails(roulettePreview)}>Game details</button>{roulettePreview.steam_app_id && <a className="button primary" href={`steam://run/${roulettePreview.steam_app_id}`}>Launch in Steam ↗</a>}</div></div><button className="roulette-close" onClick={() => setRoulette(null)} aria-label="Close roulette preview">×</button></div>}
           <PageControls page={currentPage} pageCount={pageCount} total={visible.length} onChange={setPage}/>
           {view === 'list' && pageGames.length > 0 && <div className="library-list-heading" aria-hidden="true"><span>Game</span><span>Status</span><span>Details</span></div>}
-          {pageGames.length ? <div className={view === 'grid' ? 'game-grid' : 'game-list'}>{pageGames.map((game) => <article className="game-card" key={game.id} onContextMenu={(event) => showGameMenu(event, game)}>
+          {pageGames.length ? <div className={view === 'grid' ? 'game-grid' : 'game-list'}>{pageGames.map((game) => <article className="game-card" data-game-id={game.id} key={game.id} onContextMenu={(event) => showGameMenu(event, game)}>
             <div className="poster"><button type="button" className="poster-trigger" aria-label={`View details for ${game.title}`} onClick={() => openDetails(game)}><GameCover title={game.title} cover={game.cover_image} backdrop={game.backdrop_url}/><span className="poster-view">Details</span></button><button className={`favorite ${game.is_favorite ? 'on' : ''}`} onClick={() => editGame(game, { is_favorite: !game.is_favorite })} title="Toggle favorite">★</button></div>
-            <div className="game-info"><button type="button" className="game-title detail-title" onClick={() => openDetails(game)}><b title={game.title}>{game.title}</b><span>{game.year || '—'} · {game.platform}</span></button><select aria-label={`Status for ${game.title}`} value={game.status} onChange={(event) => changeStatus(game, event.target.value)}>{STATUSES.map((value) => <option key={value}>{value}</option>)}</select><div className="game-meta"><span>{game.genres?.join(', ') || game.genre || 'Unclassified'}</span><span>{game.playtime_available === false ? 'Playtime unavailable' : prettyTime(game.playtime_minutes)}</span></div><div className="game-actions"><label>★ <input aria-label={`Rating for ${game.title}`} type="number" min="1" max="10" defaultValue={game.rating || ''} placeholder="Rate" onBlur={(event) => { if (event.target.value) editGame(game, { rating: Number(event.target.value) }) }}/></label><button type="button" className="game-menu-trigger" aria-label={`Actions for ${game.title}`} aria-haspopup="menu" aria-expanded={gameMenu?.game.id === game.id} onClick={(event) => gameMenu?.game.id === game.id ? closeGameMenu() : showGameMenu(event, game)}>Actions ▾</button><button onClick={() => openDetails({ ...game, start_review: true })}>Review</button>{game.steam_app_id && <a href={`steam://run/${game.steam_app_id}`}>Play ↗</a>}</div></div>
+            <div className="game-info"><button type="button" className="game-title detail-title" onClick={() => openDetails(game)}><b title={game.title}>{game.title}</b><span>{game.year || '—'} · {game.platform}</span></button><select aria-label={`Status for ${game.title}`} value={game.status} onChange={(event) => changeStatus(game, event.target.value)}>{STATUSES.map((value) => <option key={value}>{value}</option>)}</select><div className="game-meta"><span>{game.genres?.join(', ') || game.genre || 'Unclassified'}</span><span>{game.playtime_available === false ? 'Playtime unavailable' : prettyTime(game.playtime_minutes)}</span></div><div className="tracking-summary">{game.tracking?.priority && game.tracking.priority !== 'None' && <b>{game.tracking.priority} priority</b>}{game.tracking?.progress != null && <span>Campaign {game.tracking.progress}%</span>}{gameAttribute(game, 'estimated') != null && <span>~{gameAttribute(game, 'estimated')}h main story</span>}{game.achievements_summary?.total > 0 && <span>{game.achievements_summary.completed}/{game.achievements_summary.total} achievements</span>}</div><div className="game-actions"><label>★ <input aria-label={`Rating for ${game.title}`} type="number" min="1" max="10" defaultValue={game.rating || ''} placeholder="Rate" onBlur={(event) => { if (event.target.value) editGame(game, { rating: Number(event.target.value) }) }}/></label><button type="button" className="game-menu-trigger" aria-label={`Actions for ${game.title}`} aria-haspopup="menu" aria-expanded={gameMenu?.game.id === game.id} onClick={(event) => gameMenu?.game.id === game.id ? closeGameMenu() : showGameMenu(event, game)}>Actions ▾</button><button onClick={() => openDetails({ ...game, start_review: true })}>Review</button>{game.steam_app_id && <a href={`steam://run/${game.steam_app_id}`}>Play ↗</a>}</div></div>
           </article>)}</div> : <div className="empty-state">{games.length ? 'No games match those filters.' : 'Your vault is empty. Sync Steam or add your first game.'}</div>}
           <PageControls page={currentPage} pageCount={pageCount} total={visible.length} onChange={setPage}/>
         </div>
@@ -786,13 +819,15 @@ function App() {
       { label: gameMenu.game.review_text ? 'Edit your review…' : 'Write a review…', action: () => openDetails({ ...gameMenu.game, start_review: true }) },
       { label: gameMenu.game.is_favorite ? 'Remove from favorites' : 'Add to favorites', action: () => editGame(gameMenu.game, { is_favorite: !gameMenu.game.is_favorite }) },
       { separator: true },
+      { label: 'Planning & progress...', action: () => setTrackingGame(gameMenu.game) },
       { label: 'Edit notes…', action: () => { const notes = window.prompt('Vault notes', gameMenu.game.notes || ''); if (notes !== null) editGame(gameMenu.game, { notes }) } },
       { label: 'Set purchase price…', action: () => { const price = window.prompt('Purchase price (number)', gameMenu.game.purchase_price ?? ''); if (price !== null && price !== '') editGame(gameMenu.game, { purchase_price: Number(price) }) } },
       { separator: true },
       { label: 'Remove from vault', action: () => removeGame(gameMenu.game) },
     ]}/>}
 
-    {selectedGame && <GameDetailsDialog key={`${selectedGame.catalog_only ? 'catalog' : 'user'}-${selectedGame.id}`} game={selectedGame} details={gameDetails} loading={detailsLoading} error={detailsError} onClose={closeDetails} onSaveReview={saveReview} onAddToBacklog={addRecommendationToBacklog}/>}
+    {trackingGame && <GameTrackingDialog key={trackingGame.id} game={trackingGame} onClose={() => setTrackingGame(null)} onSave={saveTracking}/>}
+    {selectedGame && <GameDetailsDialog key={`${selectedGame.catalog_only ? 'catalog' : 'user'}-${selectedGame.id}`} game={selectedGame} details={gameDetails} loading={detailsLoading} error={detailsError} onClose={closeDetails} onSaveReview={saveReview} onAddToBacklog={addRecommendationToBacklog} onPlanning={() => { setTrackingGame(selectedGame); closeDetails() }}/>}
       </div>
     </div>
     <footer className="statusbar"><span className={supabaseOnline ? '' : 'offline'}><i/> SUPABASE {supabaseOnline ? 'ONLINE' : 'OFFLINE'}</span><span>{games.length} TITLES · {prettyTime(stats.playtime)} TRACKED</span><span>GAME DATA: RAWG + GAMEDB + STEAM + GOG</span><span>STEAM ID {user.id}</span></footer>
@@ -801,7 +836,7 @@ function App() {
 
 export default App
 
-function GameDetailsDialog({ game, details, loading, error, onClose, onSaveReview, onAddToBacklog }) {
+function GameDetailsDialog({ game, details, loading, error, onClose, onSaveReview, onAddToBacklog, onPlanning }) {
   const data = { ...game, ...details }
   const screenshots = data.screenshots || []
   const steamUrl = data.steam_app_id ? `https://store.steampowered.com/app/${data.steam_app_id}/` : null
@@ -838,7 +873,7 @@ function GameDetailsDialog({ game, details, loading, error, onClose, onSaveRevie
       {screenshots.length > 0 && <ScreenshotGallery images={screenshots} title={data.title}/>}
       <section className="details-your-game" aria-label="Your game and review">
         <div className="details-actions"><div><small>YOUR VAULT</small><h3>{game.catalog_only ? 'Make room for your next game' : 'Your take on this game'}</h3><p>{game.catalog_only ? 'Save it for later, or add it to your library and write a review.' : `${game.status || 'In your library'}${game.rating ? ` · Your rating: ${game.rating}/10` : ''}`}</p></div>
-          <div className="details-action-buttons">{game.catalog_only ? <><button className="button primary" disabled={adding || loading || !catalogId} onClick={() => addToLibrary(false)}>{adding ? 'Adding…' : '＋ Add to backlog'}</button><button className="button" disabled={adding || loading || !catalogId} onClick={() => addToLibrary(true)}>Add & write review</button></> : <button className="button primary" aria-expanded={editingReview} aria-controls="your-review-editor" onClick={() => setEditingReview((value) => !value)}>{editingReview ? 'Close editor' : game.review_text ? 'Edit your review' : 'Write a review'}</button>}</div>
+          <div className="details-action-buttons">{!game.catalog_only && <button className="button" onClick={onPlanning}>Planning & progress</button>}{game.catalog_only ? <><button className="button primary" disabled={adding || loading || !catalogId} onClick={() => addToLibrary(false)}>{adding ? 'Adding…' : '＋ Add to backlog'}</button><button className="button" disabled={adding || loading || !catalogId} onClick={() => addToLibrary(true)}>Add & write review</button></> : <button className="button primary" aria-expanded={editingReview} aria-controls="your-review-editor" onClick={() => setEditingReview((value) => !value)}>{editingReview ? 'Close editor' : game.review_text ? 'Edit your review' : 'Write a review'}</button>}</div>
         </div>
         {actionError && <p className="detail-error" role="alert">{actionError}</p>}
         {!game.catalog_only && editingReview && <form id="your-review-editor" className="review-editor" onSubmit={async (event) => {

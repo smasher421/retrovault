@@ -2,10 +2,12 @@ import 'dotenv/config'
 import crypto from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import express from 'express'
+import { GAME_STATUSES } from '../shared/library-schema.js'
+import { registerLibraryRoutes } from './library-metadata.js'
 import { THEMES } from '../shared/themes.js'
 import { registerGogRoutes } from './gog.js'
 import {
-  addCatalogGame, deleteUserGame, getCatalogGameForUser, getLanMatches, getPublicProfileSummary, getSteamCatalogNeedingEnrichment,
+  getOwnedLibraryBatch, saveAchievementSummary, addCatalogGame, deleteUserGame, getCatalogGameForUser, getLanMatches, getPublicProfileSummary, getSteamCatalogNeedingEnrichment,
   getCatalogDiscover, getCatalogGameById, getReviewsFeed, getReviewsPage, getUserGames, getUserPlayLogs, getUserProfile, searchCatalog, supabase, syncSteamGames,
   updateCatalogDetails, updateSteamCatalogMetadata, updateUserGame, updateUserGameStatus, updateUserProfile, upsertSteamProfile,
 } from './supabase.js'
@@ -13,7 +15,7 @@ import {
 const app = express()
 const PORT = Number(process.env.PORT || 3001)
 const SESSION_SECRET = process.env.SESSION_SECRET
-const STATUSES = ['Backlog', 'Playing', 'Completed', '100% Completed', 'Abandoned']
+const STATUSES = GAME_STATUSES
 const STEAM_OPENID = 'https://steamcommunity.com/openid/login'
 const cookieName = 'retrovault_session'
 const stateCookieName = 'retrovault_steam_state'
@@ -138,7 +140,8 @@ const fetchSteamGameAchievements = async (steamId, appId) => {
     error.status = 422
     throw error
   }
-  const schemaAchievements = schema.game?.availableGameStats?.achievements || []
+  if (!schema.game) throw new Error('Steam achievement definitions are unavailable. Previous progress was kept.')
+  const schemaAchievements = schema.game.availableGameStats?.achievements || []
   const unlocked = new Map((playerStats.achievements || []).map((achievement) => [achievement.apiname, achievement]))
   const achievements = schemaAchievements.map((achievement) => {
     const progress = unlocked.get(achievement.name)
@@ -161,6 +164,8 @@ const fetchSteamGameAchievements = async (steamId, appId) => {
     total: achievements.length,
   }, 10 * 60 * 1000)
 }
+registerLibraryRoutes(app, { requireUser, appOrigin, getOwnedGames: getOwnedLibraryBatch, updateCatalogDetails, fetchAchievements: fetchSteamGameAchievements, saveAchievementSummary })
+
 const retroImageUrl = (path) => path ? `https://retroachievements.org${path.startsWith('/') ? '' : '/'}${path}` : ''
 const fetchRetroAchievements = async (params, cacheKey, ttlMs) => {
   const apiKey = process.env.RETROACHIEVEMENTS_API_KEY
@@ -647,7 +652,9 @@ app.get('/api/achievements/steam/:steamAppId', requireUser, async (req, res) => 
     const ownedGames = await getUserGames(req.userId)
     const game = ownedGames.find((entry) => String(entry.steam_app_id || '') === req.params.steamAppId)
     if (!game) return res.status(404).json({ message: 'This Steam game is not in your synced library.' })
-    res.json({ ...await fetchSteamGameAchievements(req.userId, req.params.steamAppId), title: game.title })
+    const result = await fetchSteamGameAchievements(req.userId, req.params.steamAppId)
+    await saveAchievementSummary(game.id, req.userId, result)
+    res.json({ ...result, title: game.title })
   } catch (error) { res.status(error.status || 502).json({ message: error.message || 'Steam achievements are unavailable right now.' }) }
 })
 app.get('/api/achievements/retro/config', requireUser, (_req, res) => {

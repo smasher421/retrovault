@@ -34,14 +34,15 @@ Keep track of what you own, what you are playing, and what you want to try next.
 
 | Build your vault | Find your next game | Make it yours |
 | --- | --- | --- |
-| Steam library and playtime sync | Platform and genre discovery | Five collection statuses and favorites |
+| Steam library and playtime sync | Platform and genre discovery | Nine collection statuses and favorites |
 | GOG linking and library import | Steam and GOG storefronts with prices | Personal ratings, reviews, and notes |
 | Manual entries for console and PC games | Game details, scores, artwork, and screenshots | Profile statistics and opt-in sharing |
-| Search suggestions that fill in game details | Backlog roulette when you cannot decide | Ten Valve-inspired skins and custom colors |
+| Search suggestions that fill in game details | Smart collections and filtered backlog roulette | Ten Valve-inspired skins and custom colors |
 
 ### More than a list of titles
 
-- **A library you can navigate.** Search and filter, switch between compact list and poster grid, and browse 24 games per page. Right-click a game or open **Actions** for reviews, notes, favorites, and Steam launch links.
+- **A library you can navigate.** Combine title, genre, tags, platform, playtime, ratings and advanced discovery filters; save named searches to your account. Switch between list and grid, with 24 games per page. [Library filtering guide](docs/library-filters.md).
+- **A backlog with a plan.** Track priority, campaign progress, completion estimates, personal tags and compatibility. Smart collections surface short games, hidden gems and forgotten picks; roulette respects every active filter across all pages.
 - **Game information first.** Open a game to see its description, platforms, release details, available Metacritic/RAWG scores, and images. Screenshots open inside RetroVault with keyboard navigation.
 - **Reviews with room to breathe.** Write your own review, or read English Steam reviews and RetroVault community reviews. Filters, sorting, five-review pages, and expandable text keep long reviews manageable.
 - **Progress beyond playtime.** Browse unlocked and remaining Steam achievements, plus RetroAchievements progress for supported classics when the host has configured that integration.
@@ -63,7 +64,7 @@ Keep track of what you own, what you are playing, and what you want to try next.
 1. **[Open RetroVault](https://retrovault-eta.vercel.app)** and choose **Sign in through Steam**. Steam handles sign-in; enter your Steam credentials only on Steam's own page.
 2. **Open My Library → Sync Steam.** Steam's **Game details** must be public for the import. Your existing statuses, reviews, ratings, notes, and favorites survive subsequent syncs.
 3. **Add a game from another platform.** Open **Add Games**, search for a title such as *Burnout Dominator*, select a suggestion, choose the edition/platform you own, and save it to your vault. Missing title? Add it manually.
-4. **Make a backlog pick.** Mark games as Backlog, Playing, Completed, 100% Completed, or Abandoned. Use **Backlog roulette** for a random choice.
+4. **Make a backlog pick.** Mark games as Backlog, Playing, Completed, 100% Completed, or Abandoned. Use **Actions > Planning & progress** for priorities and estimates, or **Backlog roulette** for a choice matching your active filters.
 5. **Visit My Profile.** Add a bio, browse your stats, choose a skin, and optionally connect GOG. The RetroVault logo always takes you Home.
 
 You do not need your own API keys to use the hosted site. Separate installations need server-side configuration; see the [developer guide](docs/development.md).

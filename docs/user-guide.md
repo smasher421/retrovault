@@ -40,12 +40,14 @@ Use **Platforms** for a system directory or choose a platform directly from the 
 
 ## Organize the library
 
-- **Statuses:** Backlog, Playing, Completed, 100% Completed, and Abandoned.
-- **Views:** the compact list is the default; **Grid** switches to posters. Both use 24 games per page and follow your search/status filters.
+- **Statuses:** Backlog, Playing, Paused, On Hold, Completed, 100% Completed, Abandoned, Endless, and Waiting for Update.
+- **Views:** the compact list is the default; **Grid** switches to posters. Both use 24 games per page and follow all active library filters.
 - **Favorites:** use the star or the game actions menu. Favorites also appear in the current Wishlist view.
 - **Game actions:** right-click a library game or choose **Actions**. Open details, write/edit a review, edit notes or purchase price, manage favorites, remove the entry, or launch a Steam game.
 - **Keyboard menu controls:** arrow keys move between actions; Home/End jump to the first/last action; Escape closes the menu and restores focus.
-- **Roulette:** **Backlog roulette** picks a Backlog game and shows a preview. Steam launch links require the Steam desktop client.
+- **Roulette:** **Backlog roulette** picks from all matching Backlog games across every page and shows a preview. Excluded games and Not Interested entries are omitted. Steam launch links require the Steam desktop client.
+
+Use **Advanced filters** for release dates, time estimates, achievements, ratings, mood and compatibility. **Actions > Planning & progress** saves private priorities, campaign progress, estimates, personal tags and manual compatibility fields. Save named searches to reuse them across devices. See the [complete library filtering guide](library-filters.md) for query syntax, smart collection rules, data sources and provider limitations.
 
 The optional purchase price records what you paid. It is separate from a store's current offer and is used by Vault Audit to calculate recorded cost and cost per tracked play hour.
 

@@ -1,3 +1,5 @@
+import { validateTracking } from '../shared/library-schema.js'
+import { validateSavedSearches } from '../shared/library-filters.js'
 import { createClient } from '@supabase/supabase-js'
 
 const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
@@ -38,12 +40,16 @@ const toGame = (row) => {
     source: row.source,
     steam_app_id: catalog.steam_app_id,
     gog_product_id: catalog.gog_product_id,
-    playtime_available: row.source !== 'gog' || Boolean(row.playtime_synced_at),
-    playtime_minutes: row.playtime_minutes || 0,
-    last_played_at: row.last_played_at,
+    playtime_available: row.tracking?.playedHours != null || row.source === 'steam' || Boolean(row.playtime_synced_at) || Number(row.playtime_minutes) > 0,
+    playtime_minutes: row.tracking?.playedHours != null ? Math.round(row.tracking.playedHours * 60) : row.playtime_minutes || 0,
+    last_played_at: row.tracking?.lastSession || row.last_played_at,
     is_favorite: row.is_favorite,
     purchase_price: row.purchase_price,
     time_to_beat_hours: catalog.time_to_beat_hours,
+    discovery_metadata: catalog.discovery_metadata || {},
+    tracking: row.tracking || {},
+    achievements_summary: row.achievements_summary || null,
+    recent_playtime_minutes: row.recent_playtime_minutes ?? null,
     genres: catalog.genres || [],
     multiplayer: catalog.multiplayer || false,
     co_op: catalog.co_op || false,
@@ -54,7 +60,7 @@ const toGame = (row) => {
   }
 }
 
-const catalogRelation = 'catalog:games_catalog(id,title,slug,platforms,release_year,genres,cover_url,backdrop_url,artwork_grid_url,artwork_hero_url,artwork_logo_url,metacritic_score,metacritic_url,screenshots,summary,developer,publisher,steam_app_id,gog_product_id,rawg_id,metadata_provider,rating_avg,rating_count,time_to_beat_hours,multiplayer,co_op)'
+const catalogRelation = 'catalog:games_catalog(id,title,slug,platforms,release_year,genres,cover_url,backdrop_url,artwork_grid_url,artwork_hero_url,artwork_logo_url,metacritic_score,metacritic_url,screenshots,summary,developer,publisher,steam_app_id,gog_product_id,rawg_id,metadata_provider,rating_avg,rating_count,time_to_beat_hours,multiplayer,co_op,discovery_metadata)'
 
 export const getCatalogGameForUser = async (userId, userGameId) => {
   if (!supabase) throw new Error('Supabase server configuration is missing')
@@ -74,7 +80,7 @@ export const getCatalogGameById = async (catalogId) => {
 
 export const updateCatalogDetails = async (catalogId, changes) => {
   const allowedFields = [
-    'metacritic_score', 'metacritic_url', 'screenshots', 'artwork_grid_url',
+    'discovery_metadata', 'metacritic_score', 'metacritic_url', 'screenshots', 'artwork_grid_url',
     'artwork_hero_url', 'artwork_logo_url', 'details_updated_at', 'summary',
     'developer', 'publisher', 'release_year', 'genres', 'platforms', 'backdrop_url', 'cover_url',
     'rawg_id', 'slug', 'metadata_provider', 'metadata_updated_at', 'rating_avg', 'rating_count',
@@ -123,6 +129,7 @@ export const upsertSteamProfile = async (steamId, player = {}) => {
 
 export const updateUserProfile = async (steamId, changes) => {
   const allowed = {}
+  if (Object.hasOwn(changes, 'saved_searches')) allowed.saved_searches = validateSavedSearches(changes.saved_searches)
   if (changes.preferred_theme) allowed.preferred_theme = changes.preferred_theme
   if (changes.custom_theme && typeof changes.custom_theme === 'object') allowed.custom_theme = changes.custom_theme
   if (typeof changes.is_public === 'boolean') allowed.is_public = changes.is_public
@@ -329,6 +336,7 @@ export const updateUserGameStatus = async (id, userId, status) => {
 
 export const updateUserGame = async (id, userId, changes) => {
   const allowed = {}
+  if (Object.hasOwn(changes, 'tracking')) allowed.tracking = validateTracking(changes.tracking)
   for (const field of ['rating', 'is_favorite', 'notes', 'review_text', 'purchase_price', 'platform_played']) {
     if (Object.hasOwn(changes, field)) allowed[field] = changes[field]
   }
@@ -397,6 +405,7 @@ export const syncSteamGames = async (userId, steamGames) => {
       status: existing?.status || (totalMinutes > 0 ? 'Playing' : 'Backlog'),
       platform_played: 'Steam',
       playtime_minutes: totalMinutes,
+      recent_playtime_minutes: Math.max(0, Number(game.playtime_2weeks) || 0),
       last_played_at: game.rtime_last_played ? new Date(game.rtime_last_played * 1000).toISOString() : null,
       source: 'steam',
     }
@@ -470,9 +479,9 @@ export const getPublicProfileSummary = async (steamId) => {
     .eq('user_id', steamId)
     .order('created_at', { ascending: false })
   if (error) throw error
-  const games = (data || []).map(toGame)
+  const games = (data || []).map(toGame).filter((game) => game.tracking.hidden !== 'Yes')
   const completed = games.filter((game) => ['Completed', '100% Completed'].includes(game.status)).length
-  const privateFields = new Set(['notes', 'review_text', 'purchase_price', 'source'])
+  const privateFields = new Set(['notes', 'review_text', 'purchase_price', 'source', 'tracking', 'achievements_summary', 'recent_playtime_minutes'])
   const publicGames = games.map((game) => Object.fromEntries(Object.entries(game).filter(([key]) => !privateFields.has(key))))
   return {
     profile: { steam_id: profile.steam_id, username: profile.username, avatar_url: profile.avatar_url, profile_url: profile.profile_url, steam_created_at: profile.steam_created_at, is_public: profile.is_public },
@@ -503,4 +512,18 @@ export const getLanMatches = async (userId, friendSteamId) => {
     .order('title')
   if (error) throw error
   return data || []
+}
+
+export const saveAchievementSummary = async (id, userId, summary) => {
+  const unlockDates = (summary.achievements || []).filter((achievement) => achievement.achieved && achievement.unlockedAt).map((achievement) => achievement.unlockedAt).sort()
+  const record = { completed: summary.completed, total: summary.total, source: summary.source, updatedAt: new Date().toISOString(), completedAt: summary.total > 0 && summary.completed === summary.total && unlockDates.length === summary.total ? unlockDates.at(-1) : null }
+  const { error } = await supabase.from('user_games').update({ achievements_summary: record }).eq('id', id).eq('user_id', userId)
+  if (error) throw error
+  return record
+}
+
+export const getOwnedLibraryBatch = async (userId, ids) => {
+  const { data, error } = await supabase.from('user_games').select(`*, ${catalogRelation}`).eq('user_id', userId).in('id', ids)
+  if (error) throw error
+  return (data || []).map(toGame)
 }
