@@ -57,7 +57,7 @@ Click the title or cover to open its dossier. Available information includes des
 
 Click a screenshot to preview it **inside RetroVault**. Use the on-screen controls or arrow keys to navigate; Escape closes the preview.
 
-Personal actions appear before community reviews. Choose **Write a review** for an owned entry or **Add & write review** for a catalog title. Ratings use a 1–10 scale. Your review is public only while your RetroVault profile is public.
+Personal actions appear before community reviews. Choose **Write a review** for an owned entry or **Add & write review** for a catalog title. Ratings use a 1–10 scale. Choose **Public community review** to share it even with a private profile, **Private - only me** to keep a draft, or **Follow profile privacy**. Existing reviews retain the last behavior until you change it. For an existing private review, open the game and select **Publish review**; **Make review private** retracts it. You do not need to be Steam friends to read published reviews. After saving, the dossier switches to the RetroVault review source.
 
 ### Review filters and pages
 
@@ -109,7 +109,7 @@ The host must configure a RetroAchievements API key. Hosted-site users do not ne
 
 Choose a skin in **My Profile** or **Settings**. Presets apply throughout the site and clear custom color overrides. Settings lets you change background, panel, accent, and text colors; **Save custom colors** persists them and **Use theme colors** restores the current preset.
 
-Profiles start **private**. Open **My Profile → Profile visibility & sharing** to reach the sharing controls (the sidebar entry is currently **People you follow**). Enabling sharing makes your collection and reviews eligible for public views and enables a public completion badge. The app provides a public profile link and a Markdown badge snippet there.
+Profiles start **private**. Open **My Profile → Profile visibility & sharing** to reach the sharing controls (the sidebar entry is currently **People you follow**). Enabling sharing makes your collection public, publishes reviews set to Follow profile privacy, and enables a public completion badge. Explicitly private reviews stay private; explicitly public community reviews can be read even when your profile is private. The app provides a public profile link and a Markdown badge snippet there.
 
 This setting is independent of Steam's privacy controls. Turning on Steam Game details for syncing does not automatically make your RetroVault profile public.
 

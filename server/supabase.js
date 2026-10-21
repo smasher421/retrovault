@@ -1,3 +1,4 @@
+import { REVIEW_VISIBILITIES, isReviewPublic } from '../shared/reviews.js'
 import { validateTracking } from '../shared/library-schema.js'
 import { validateSavedSearches } from '../shared/library-filters.js'
 import { createClient } from '@supabase/supabase-js'
@@ -26,6 +27,7 @@ const toGame = (row) => {
     rating: row.rating,
     notes: row.notes || '',
     review_text: row.review_text || '',
+    review_visibility: row.review_visibility || 'profile',
     cover_image: catalog.artwork_grid_url || catalog.cover_url || catalog.backdrop_url || '',
     backdrop_url: catalog.artwork_hero_url || catalog.backdrop_url || '',
     artwork_grid_url: catalog.artwork_grid_url || '',
@@ -181,57 +183,50 @@ export const getCatalogDiscover = async (userId, { platform = '', genre = '', li
   return (catalog || []).filter((game) => !ownedIds.has(game.id))
 }
 
-export const getReviewsFeed = async (userId, { catalogId, limit = 40 } = {}) => {
-  if (!supabase) throw new Error('Supabase server configuration is missing')
-  let request = supabase.from('user_games').select('id,user_id,catalog_id,rating,review_text,updated_at')
-    .not('review_text', 'is', null).neq('review_text', '').order('updated_at', { ascending: false })
-    .limit(catalogId ? 1000 : 500)
-  if (catalogId) request = request.eq('catalog_id', catalogId)
-  const { data: reviewRows, error } = await request
-  if (error) throw error
-  const rows = reviewRows || []
-  if (!rows.length) return []
-  const userIds = [...new Set(rows.map((review) => review.user_id))]
-  const catalogIds = [...new Set(rows.map((review) => review.catalog_id))]
-  const [{ data: profiles, error: profileError }, { data: games, error: gameError }] = await Promise.all([
-    supabase.from('profiles').select('steam_id,username,avatar_url,is_public').in('steam_id', userIds),
-    supabase.from('games_catalog').select('id,title,release_year,platforms,genres,cover_url,backdrop_url,artwork_grid_url,artwork_hero_url,metacritic_score,rating_avg,rating_count').in('id', catalogIds),
-  ])
-  if (profileError) throw profileError
-  if (gameError) throw gameError
-  const profileById = new Map((profiles || []).map((profile) => [profile.steam_id, profile]))
-  const gameById = new Map((games || []).map((game) => [game.id, game]))
-  return rows.filter((review) => review.user_id === userId || profileById.get(review.user_id)?.is_public)
-    .map((review) => ({
-      ...review,
-      author: { username: profileById.get(review.user_id)?.username || 'RetroVault player', avatar_url: profileById.get(review.user_id)?.avatar_url || null },
-      game: gameById.get(review.catalog_id) || null,
-      is_mine: review.user_id === userId,
-    })).filter((review) => review.game).slice(0, Math.min(Math.max(limit, 1), 100))
-}
-
-export const getReviewsPage = async (userId, { catalogId, page = 1, sort = 'recent', rating = 'all' } = {}) => {
-  if (!supabase) throw new Error('Supabase server configuration is missing')
-  const pageSize = 5
+// Filter publication at the database level before counts, ordering, or pagination.
+// An empty, filtered profile embed supplies the legacy follow-profile condition.
+const reviewQuery = (userId, { catalogId, sort = 'recent', rating = 'all' } = {}, count = false) => {
   let request = supabase.from('user_games').select(`
-    id,user_id,catalog_id,rating,review_text,updated_at,
-    author:profiles!inner(username,avatar_url),
-    game:games_catalog!inner(id,title,cover_url,backdrop_url,artwork_grid_url)
-  `, { count: 'exact' })
+    id,user_id,catalog_id,rating,review_text,review_visibility,updated_at,
+    author:profiles!inner(username,avatar_url,is_public),
+    public_author:profiles(),
+    game:games_catalog!inner(id,title,release_year,platforms,genres,cover_url,backdrop_url,artwork_grid_url,artwork_hero_url,metacritic_score,rating_avg,rating_count)
+  `, count ? { count: 'exact' } : {})
     .not('review_text', 'is', null).neq('review_text', '')
-    // Apply visibility before counting/paging, including the viewer's private review.
-    .or(`is_public.eq.true,steam_id.eq.${userId}`, { referencedTable: 'author' })
+    .eq('public_author.is_public', true)
+    .or(`user_id.eq.${userId},review_visibility.eq.public,and(review_visibility.eq.profile,public_author.not.is.null)`)
   if (catalogId) request = request.eq('catalog_id', catalogId)
   if (rating === 'positive') request = request.gte('rating', 7)
   if (rating === 'mixed') request = request.gte('rating', 4).lte('rating', 6)
   if (rating === 'negative') request = request.lte('rating', 3)
   if (rating === 'unrated') request = request.is('rating', null)
   if (sort !== 'recent') request = request.order('rating', { ascending: sort === 'lowest', nullsFirst: false })
-  const { data, count, error } = await request.order('updated_at', { ascending: false }).order('id')
+  return request.order('updated_at', { ascending: false }).order('id')
+}
+const formatReview = (review, userId) => ({
+  id: review.id, user_id: review.user_id, catalog_id: review.catalog_id,
+  rating: review.rating, review_text: review.review_text, review_visibility: review.review_visibility,
+  updated_at: review.updated_at, game: review.game,
+  author: { username: review.author.username, avatar_url: review.author.avatar_url },
+  is_mine: review.user_id === userId,
+  is_published: isReviewPublic(review.review_visibility, review.author.is_public),
+})
+
+export const getReviewsFeed = async (userId, { catalogId, limit = 40 } = {}) => {
+  if (!supabase) throw new Error('Supabase server configuration is missing')
+  const { data, error } = await reviewQuery(userId, { catalogId }).limit(Math.min(Math.max(limit, 1), 100))
+  if (error) throw error
+  return (data || []).map((review) => formatReview(review, userId))
+}
+
+export const getReviewsPage = async (userId, { catalogId, page = 1, sort = 'recent', rating = 'all' } = {}) => {
+  if (!supabase) throw new Error('Supabase server configuration is missing')
+  const pageSize = 5
+  const { data, count, error } = await reviewQuery(userId, { catalogId, sort, rating }, true)
     .range((page - 1) * pageSize, page * pageSize - 1)
   if (error) throw error
   return {
-    reviews: (data || []).map((review) => ({ ...review, is_mine: review.user_id === userId })),
+    reviews: (data || []).map((review) => formatReview(review, userId)),
     total: count || 0, page, page_size: pageSize, total_pages: Math.ceil((count || 0) / pageSize),
   }
 }
@@ -336,6 +331,10 @@ export const updateUserGameStatus = async (id, userId, status) => {
 
 export const updateUserGame = async (id, userId, changes) => {
   const allowed = {}
+  if (Object.hasOwn(changes, 'review_visibility')) {
+    if (!REVIEW_VISIBILITIES.some(([value]) => value === changes.review_visibility)) throw new Error('Choose a supported review visibility.')
+    allowed.review_visibility = changes.review_visibility
+  }
   if (Object.hasOwn(changes, 'tracking')) allowed.tracking = validateTracking(changes.tracking)
   for (const field of ['rating', 'is_favorite', 'notes', 'review_text', 'purchase_price', 'platform_played']) {
     if (Object.hasOwn(changes, field)) allowed[field] = changes[field]
@@ -481,7 +480,7 @@ export const getPublicProfileSummary = async (steamId) => {
   if (error) throw error
   const games = (data || []).map(toGame).filter((game) => game.tracking.hidden !== 'Yes')
   const completed = games.filter((game) => ['Completed', '100% Completed'].includes(game.status)).length
-  const privateFields = new Set(['notes', 'review_text', 'purchase_price', 'source', 'tracking', 'achievements_summary', 'recent_playtime_minutes'])
+  const privateFields = new Set(['notes', 'review_text', 'review_visibility', 'purchase_price', 'source', 'tracking', 'achievements_summary', 'recent_playtime_minutes'])
   const publicGames = games.map((game) => Object.fromEntries(Object.entries(game).filter(([key]) => !privateFields.has(key))))
   return {
     profile: { steam_id: profile.steam_id, username: profile.username, avatar_url: profile.avatar_url, profile_url: profile.profile_url, steam_created_at: profile.steam_created_at, is_public: profile.is_public },

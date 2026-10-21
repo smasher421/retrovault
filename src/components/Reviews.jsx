@@ -99,7 +99,7 @@ export function VaultReviewsPanel({ catalogId, refreshKey = '', onOpenGame }) {
   const reviews = data?.reviews || []
   const updateFilter = (key, value) => { setFilters((current) => ({ ...current, [key]: value })); setPage(1) }
   return <section className="steam-reviews-panel vault-reviews-panel" aria-busy={Boolean(loading)}>
-    <div className="review-feed-heading steam-review-heading"><div><h2 ref={heading} tabIndex={-1}>RetroVault player reviews</h2><small>{data ? `${data.total} matching reviews · ` : ''}5 per page</small></div></div>
+    <div className="review-feed-heading steam-review-heading"><div><h2 ref={heading} tabIndex={-1}>RetroVault player reviews</h2><small>Public community reviews + your own private reviews. {data ? `${data.total} matching reviews · ` : ''}5 per page</small></div></div>
     <div className="steam-review-toolbar">
       <label>Order<select value={filters.sort} onChange={(event) => updateFilter('sort', event.target.value)}><option value="recent">Newest</option><option value="highest">Highest rated</option><option value="lowest">Lowest rated</option></select></label>
       <label>Rating<select value={filters.rating} onChange={(event) => updateFilter('rating', event.target.value)}><option value="all">All ratings</option><option value="positive">Positive · 7–10</option><option value="mixed">Mixed · 4–6</option><option value="negative">Negative · 1–3</option><option value="unrated">Without a rating</option></select></label>
@@ -109,6 +109,7 @@ export function VaultReviewsPanel({ catalogId, refreshKey = '', onOpenGame }) {
     {!loading && !error && <div key={`${filters.sort}-${filters.rating}-${page}`}>{reviews.map((review) => <article className="steam-review-card" key={review.id}>
       {!catalogId && <h3>{review.game.title}</h3>}
       <div className="community-review-author">{review.author.avatar_url && <img src={review.author.avatar_url} alt="" loading="lazy"/>}<span><b>{review.author.username}{review.is_mine ? ' · You' : ''}</b><small>{review.rating ? `${review.rating}/10` : 'No rating'} · {new Date(review.updated_at).toLocaleDateString()}</small></span></div>
+      {review.is_mine && <small className="review-visibility-label">{review.is_published ? 'Public review' : 'Private review - only you can see this'}</small>}
       <ReviewText text={review.review_text}/>
       {onOpenGame && <button className="button small" onClick={() => onOpenGame(review.game)}>{review.is_mine ? 'Edit your review' : 'Game details'}</button>}
     </article>)}</div>}

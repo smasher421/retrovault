@@ -86,7 +86,7 @@ There are ten skins: **VGUI Olive**, **Source Obsidian**, **HEV Hazard**, **LAN 
 
 ## Privacy and current limits
 
-- **Your RetroVault profile starts private.** Sharing is opt-in through **My Profile → Profile visibility & sharing**. Public collections, review visibility, and completion badges follow that setting. This is separate from Steam's Game details setting.
+- **Your RetroVault profile starts private.** Sharing is opt-in through **My Profile → Profile visibility & sharing**. Public collections and completion badges follow that setting. Reviews have their own public/private selector, so you can share a review without sharing your library. This is separate from Steam's Game details setting.
 - **Store prices currently use Romania as the region.** Prices, currencies, discounts, and availability come from the stores and may change. Purchases happen on the original store.
 - **GOG support depends on its desktop interfaces.** This is not an officially registered GOG integration; provider changes can affect linking or sync. Some games have no available Galaxy playtime.
 - **Discovery is still growing.** Platform/genre recommendations use the cached catalog and a curated GameDB selection; search reaches further. Metadata, scores, and artwork are not available for every release.

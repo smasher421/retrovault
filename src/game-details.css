@@ -25,6 +25,9 @@
 .vault-reviews-panel .community-review-author small { color: var(--muted); }
 .vault-reviews-panel .steam-review-card h3 { margin: 0 0 10px; font-size: 15px; }
 .review-expand:focus-visible, .review-pagination button:focus-visible, .review-source-picker button:focus-visible { outline: 2px solid var(--custom-accent); outline-offset: 3px; }
+.review-publication { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 12px 0; padding: 12px; border: 1px solid var(--border); background: var(--vgui-recess); }
+.review-publication p { flex: 1; min-width: 200px; margin: 0; line-height: 1.5; color: var(--muted); }
+.review-visibility-label { display: block; margin: 8px 0; color: var(--custom-accent); }
 @media (max-width: 700px) {
   .details-your-game { padding: 14px 12px; }
   .details-actions, .details-community-heading { align-items: flex-start; flex-direction: column; }

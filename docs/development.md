@@ -70,7 +70,10 @@ GameDB publishes lightweight name-search buckets and per-game JSON records; Retr
    - [`supabase/migrations/20261015204001_add_game_details_and_artwork_fields.sql`](../supabase/migrations/20261015204001_add_game_details_and_artwork_fields.sql)
    - [`supabase/migrations/20261016134051_profile_themes_gog.sql`](../supabase/migrations/20261016134051_profile_themes_gog.sql)
 
-   The original migrations preserve the legacy collection and introduce the normalized catalog, service-only RLS, indexes, and game artwork. The latest migration adds profile bios, Valve-inspired skins and private GOG account/sync storage.
+   - [`supabase/migrations/20261021194256_library_intelligence.sql`](../supabase/migrations/20261021194256_library_intelligence.sql)
+   - [`supabase/migrations/20261021200725_independent_review_visibility.sql`](../supabase/migrations/20261021200725_independent_review_visibility.sql)
+
+   The original migrations preserve the legacy collection and introduce the normalized catalog, service-only RLS, indexes, and game artwork. Later migrations add profile bios, Valve-inspired skins, private GOG account/sync storage, library planning and independent review visibility.
 
 4. Set Steam **Profile → Edit Profile → Privacy Settings → Game details** to **Public**.
 
@@ -162,9 +165,9 @@ Private routes require the signed Steam session cookie unless noted.
 | `POST` | `/api/catalog/rawg/:rawgId` | Loads and saves RAWG game metadata and screenshots into the shared catalog. |
 | `GET` | `/api/catalog/search?q=...` | Merges RetroVault, GameDB, and configured RAWG title suggestions. |
 | `GET` | `/api/catalog/discover?platform=...&genre=...&page=...` | Recommends games by platform or genre while excluding titles already in the caller's library. |
-| `GET` | `/api/reviews?limit=...` | Returns recent reviews from public profiles and the caller's own reviews. |
+| `GET` | `/api/reviews?limit=...` | Returns published community reviews and the caller's own private reviews. |
 | `GET` | `/api/catalog/:catalogId/reviews?page=1&sort=recent&rating=all` | Five reviews per page, totals and page count. Sort: recent/highest/lowest. Rating: all/positive/mixed/negative/unrated. Visibility is enforced before paging. |
-| `GET` | `/api/reviews/page?page=1&sort=recent&rating=all` | The same paged public/own review feed across games; optional `catalog_id` filter. |
+| `GET` | `/api/reviews/page?page=1&sort=recent&rating=all` | The same paged published/own review feed across games; optional `catalog_id` filter. |
 | `GET` | `/api/catalog/:catalogId/details` | Loads details and artwork for a catalog game before it is added to a user's collection. |
 | `GET` | `/api/store/steam?category=top_sellers\|most_played\|new_releases\|specials` | Returns the selected Steam storefront shelf, including Romanian prices and the current player chart. |
 | `POST` | `/api/store/steam/:steamAppId/catalog` | Loads a Steam product into the shared catalog so it can be viewed or added to Backlog. |
@@ -192,6 +195,12 @@ The shared vocabulary in `shared/library-schema.js` drives the manual editor and
 Steam metadata refresh uses appdetails, public store tags, appreviews and Deck reports. RAWG tags can be refreshed for linked non-Steam titles. Complete metadata caches for 7 days, partial results for 1 hour; provider failures preserve previous fields. Do not queue hundreds of fetches on library load. Achievement summaries are personal and owner scoped; successful results cache completed/total and the latest unlock date only when a perfect game's full unlock dates are known.
 
 HLTB has no supported integration here and currently blocks automated requests with HTTP 403. Public-page import is best effort; manual main/extras/completionist estimates with an explicit source remain available. Do not substitute RAWG average playtime for completion time or implement access-control bypasses. Local installation/HDR/ultrawide/storage fields are manual when providers do not supply them. See [the player-facing filtering guide](library-filters.md).
+
+## Review publication
+
+Reviews are stored in `user_games.review_text` with the personal rating; there is no separate reviews table. The additive `20261021200725_independent_review_visibility.sql` migration adds `review_visibility`: `profile` preserves legacy profile-based visibility, `public` shares the review independently, and `private` shows it only to the owner. No existing review or profile is automatically made public. The owner can publish/retract an existing review, and new review editors clearly select community publication by default.
+
+Both feed endpoints use one database query with an empty filtered profile embed (`public_author`) and a root OR: owner, explicit public review, or profile-following review whose author is public. Filtering happens before counts, sort and range. The author display join stays separate, allowing public reviews from private profiles. API results contain author display fields and `is_published`, without sharing library/notes/planning data. See [PostgREST embedding and null filters](https://postgrest.org/en/stable/references/api/resource_embedding.html#null-filtering-on-embedded-resources). `PATCH /api/games/:id` accepts only `profile`, `public` or `private`, checks the signed-session owner, and keeps this setting through Steam/GOG sync.
 
 ## Security and privacy
 
