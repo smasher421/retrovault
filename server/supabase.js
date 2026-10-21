@@ -481,7 +481,7 @@ export const getPublicProfileSummary = async (steamId) => {
   const games = (data || []).map(toGame).filter((game) => game.tracking.hidden !== 'Yes')
   const completed = games.filter((game) => ['Completed', '100% Completed'].includes(game.status)).length
   const privateFields = new Set(['notes', 'review_text', 'review_visibility', 'purchase_price', 'source', 'tracking', 'achievements_summary', 'recent_playtime_minutes'])
-  const publicGames = games.map((game) => Object.fromEntries(Object.entries(game).filter(([key]) => !privateFields.has(key))))
+  const publicGames = games.map((game) => Object.fromEntries(Object.entries(game).filter(([key]) => !privateFields.has(key) && !(key === 'rating' && game.review_visibility === 'private'))))
   return {
     profile: { steam_id: profile.steam_id, username: profile.username, avatar_url: profile.avatar_url, profile_url: profile.profile_url, steam_created_at: profile.steam_created_at, is_public: profile.is_public },
     games: publicGames,
